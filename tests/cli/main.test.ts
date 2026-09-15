@@ -1,0 +1,73 @@
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
+
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { parseCliArguments, resolveRepositoryRoot, runCli } from '../../src/cli/main.js';
+
+describe('CLI', () => {
+  const temporaryPaths: string[] = [];
+
+  afterEach(async () => {
+    await Promise.all(
+      temporaryPaths.splice(0).map((temporaryPath) =>
+        rm(temporaryPath, { recursive: true, force: true }),
+      ),
+    );
+  });
+
+  it('parses a goal and resolves the repository option', () => {
+    const workingDirectory = path.join(tmpdir(), 'mini-code-working-directory');
+
+    expect(
+      parseCliArguments(['Add email validation', '--repo', './sample'], workingDirectory),
+    ).toEqual({
+      goal: 'Add email validation',
+      repositoryRoot: path.resolve(workingDirectory, 'sample'),
+    });
+  });
+
+  it('rejects a repository path that does not exist', async () => {
+    const missingPath = path.join(tmpdir(), `missing-mini-code-${Date.now()}`);
+
+    await expect(resolveRepositoryRoot(missingPath)).rejects.toThrow(
+      `Repository path does not exist: ${missingPath}`,
+    );
+  });
+
+  it('rejects a repository path that is a file', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'mini-code-cli-'));
+    temporaryPaths.push(directory);
+    const filePath = path.join(directory, 'file.txt');
+    await writeFile(filePath, 'content');
+
+    await expect(resolveRepositoryRoot(filePath)).rejects.toThrow(
+      `Repository path is not a directory: ${filePath}`,
+    );
+  });
+
+  it('renders the validated goal and repository', async () => {
+    const directory = await mkdtemp(path.join(tmpdir(), 'mini-code-cli-'));
+    temporaryPaths.push(directory);
+    const output: string[] = [];
+
+    await runCli(['Add email validation', '--repo', directory], (message) => output.push(message));
+
+    expect(output).toEqual([
+      'Mini Coding Agent',
+      'Goal: Add email validation',
+      `Repository: ${await resolveRepositoryRoot(directory)}`,
+      'Bootstrap ready. Repository exploration arrives in Milestone 2.',
+    ]);
+  });
+
+  it('treats help as a successful CLI exit', async () => {
+    const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
+
+    await expect(runCli(['--help'], vi.fn())).resolves.toBeUndefined();
+
+    expect(stdout).toHaveBeenCalled();
+    stdout.mockRestore();
+  });
+});
