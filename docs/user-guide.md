@@ -1,6 +1,6 @@
 # User Guide
 
-Mini Coding Agent currently explores a trusted local repository and generates a structured implementation plan for a coding goal. It does not create, edit, delete, test, or commit files in the current release.
+Mini Coding Agent explores a trusted Git repository, generates a structured implementation plan, requests human approval, applies approved file changes, and displays the final diff. It does not run tests, delete files, create commits, or correct failures automatically in the current release.
 
 ## Quick Path
 
@@ -8,6 +8,8 @@ Mini Coding Agent currently explores a trusted local repository and generates a 
 2. Export `OPENAI_API_KEY` in your shell.
 3. Run `npm run dev -- "your goal" --repo path/to/repository`.
 4. Review the exploration summary, affected files, ordered tasks, and verification strategy.
+5. Enter `y` or `yes` to execute; any other response cancels without writes.
+6. If approved, review the final status, modified files, and Git diff. Cancellation prints a confirmation and exits without a diff.
 
 ## Requirements
 
@@ -15,6 +17,7 @@ Mini Coding Agent currently explores a trusted local repository and generates a 
 | --- | --- |
 | Node.js | 20.19.0 |
 | npm | Included with a supported Node.js installation |
+| Git | A working tree containing the selected repository path |
 | OpenAI API key | Required for normal CLI exploration and planning |
 | Repository | Local, readable, and trusted |
 | Internet | Required only for OpenAI API calls |
@@ -150,7 +153,7 @@ The current release can plan implementation-oriented goals:
 Add email validation and update the tests
 ```
 
-The result is a proposed plan only. Review it as untrusted model output before relying on it; approval and execution are not available yet.
+Treat the proposed plan as untrusted model output. Entering `y` or `yes` authorizes every listed `create` and `modify` operation. Any other response cancels cleanly before execution.
 
 ## Understanding the Output
 
@@ -176,7 +179,14 @@ Plan generated
    - modify src/users/RegisterUser.test.ts: Document invalid-email behavior.
    Expected outcome: Registration tests cover valid and invalid addresses.
 Verification strategy: Run the registration unit tests.
-No files were changed.
+Proceed? [y/N] y
+Executing approved plan...
+Agent status: completed
+Completed tasks: task-1, task-2
+Modified files: src/users/Email.ts, src/users/RegisterUser.ts, src/users/RegisterUser.test.ts
+Final diff:
+diff --git a/src/users/RegisterUser.ts b/src/users/RegisterUser.ts
+...
 ```
 
 The output contains:
@@ -192,10 +202,17 @@ The output contains:
 | File operation | Whether a task expects to create or modify a path |
 | Expected outcome | The behavior that should hold after each task |
 | Verification strategy | How the completed change should be checked |
+| Agent status | Whether approved execution completed or failed; cancellation prints a separate confirmation |
+| Modified files | Files successfully written before completion or failure |
+| Final diff | Bounded Git diff against `HEAD`, scoped to the selected path, including staged, unstaged, and non-ignored untracked content |
 
 The model can complete with no relevant files when the available evidence does not identify a match.
 
 The planner may propose new files, but it cannot classify an existing path as new. Modifications are limited to files identified by exploration. Paths outside the repository, restricted locations, and non-portable Windows names are rejected before display.
+
+New files can only be created when their immediate parent directory already exists. The agent has no directory-creation capability.
+
+During execution, the model must return complete content for exactly the approved files and operations. Extra files, missing files, repeated files, and operation changes are rejected before that task writes.
 
 ## What the Agent Reads
 
@@ -222,14 +239,18 @@ Before running the CLI:
 - remove sensitive material that is not covered by the built-in exclusions;
 - avoid repositories controlled by an untrusted local process;
 - review OpenAI data-handling settings applicable to your account.
+- use a clean branch or otherwise preserve work you cannot afford to lose;
+- read every task and file operation before approving.
 
 The restricted-path policy is defense in depth, not a data-loss-prevention product.
 
+Approved tasks execute sequentially. A task with multiple files is not transactional: if a later write fails, earlier writes remain and are reported. The agent does not automatically roll back changes. Atomic edits preserve basic mode bits, but replacement may not preserve ownership, ACLs, or extended attributes on every filesystem.
+
 The current agent cannot:
 
-- write or delete files;
 - execute shell commands;
 - run tests;
+- delete files;
 - mutate Git state;
 - push code;
 - create pull requests.
@@ -258,6 +279,16 @@ npm run dev -- "Find authentication" --repo ../correct-path
 ### `Repository path is not a directory`
 
 `--repo` points to a file. Pass the directory containing the repository instead.
+
+### Git validation fails
+
+The selected path must be inside a Git working tree. Git is validated before any model call or file write.
+
+```bash
+git -C path/to/repository status
+```
+
+Initialize or select the correct repository before retrying.
 
 ### `Repository exploration exceeded 12 steps`
 
@@ -298,6 +329,10 @@ Confirm:
 
 Try removing `OPENAI_MODEL` to return to the documented default.
 
+### Execution fails after modifying files
+
+Review `Modified files`, `Failure`, and `Final diff`. Multi-file tasks do not roll back earlier successful writes. Resolve or revert changes manually before running the agent again.
+
 ## Development and Offline Tests
 
 Normal tests use `FakeLanguageModel`, so they are fast and deterministic:
@@ -320,9 +355,11 @@ No standard verification command calls OpenAI.
 
 - Exploration context is accumulated without summarization.
 - Search is literal and does not support regular expressions.
-- Only a fixed set of read-only tools exists.
+- Exploration uses a fixed set of read-only tools.
+- Write capability is limited to approved create and full-content edit operations in existing directories.
 - There is no persistent session or memory.
-- There is no approval or execution workflow yet.
+- Tests and verification strategies are displayed but not executed.
+- Execution failures are not corrected automatically.
 - There is no event log beyond current CLI output.
 
 Follow the [Roadmap](../README.md#roadmap) for planned capabilities.

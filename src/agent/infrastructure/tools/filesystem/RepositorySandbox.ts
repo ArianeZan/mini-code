@@ -63,6 +63,32 @@ export class RepositorySandbox implements RepositoryPathInspector {
     return true;
   }
 
+  async resolveNewFile(repositoryPath: string): Promise<string> {
+    const segments = this.#validateRequestedPath(repositoryPath);
+    const candidate = path.resolve(this.root, ...segments);
+
+    if (await this.exists(repositoryPath)) {
+      throw new Error(`File already exists: ${repositoryPath}`);
+    }
+
+    const parent = await realpath(path.dirname(candidate));
+    if (!this.contains(parent)) {
+      throw new Error(`Path resolves outside the repository: ${repositoryPath}`);
+    }
+
+    this.#assertAllowed(path.relative(this.root, parent).split(path.sep));
+    const parentStats = await stat(parent);
+    if (!parentStats.isDirectory()) {
+      throw new Error(`Parent path is not a directory: ${repositoryPath}`);
+    }
+
+    return candidate;
+  }
+
+  async assertCanCreate(repositoryPath: string): Promise<void> {
+    await this.resolveNewFile(repositoryPath);
+  }
+
   contains(absolutePath: string): boolean {
     const relativePath = path.relative(this.root, absolutePath);
     return (

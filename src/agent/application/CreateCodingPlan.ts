@@ -81,6 +81,10 @@ export class CreateCodingPlan {
           throw new Error(`Plan cannot create an existing file: ${normalizedPath}`);
         }
 
+        if (file.operation === 'create') {
+          await this.repositoryPaths.assertCanCreate(normalizedPath);
+        }
+
         if (file.operation === 'create' && plannedCreations.has(pathKey)) {
           throw new Error(`Plan cannot create the same file twice: ${normalizedPath}`);
         }

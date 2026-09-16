@@ -1,18 +1,23 @@
 # Technical Architecture
 
-Mini Coding Agent uses a small Ports and Adapters structure to keep the agent workflow explicit, provider-independent, and testable. The current implementation delivers read-only repository exploration and structured planning; state transitions, approval, writes, verification, and events will extend the same boundaries in later milestones.
+Mini Coding Agent uses a small Ports and Adapters structure to keep the agent workflow explicit, provider-independent, and testable. The current implementation delivers repository exploration, structured planning, human approval, bounded file execution, explicit state transitions, and final Git diff generation. Automated verification and events remain future milestones.
 
 ## Architecture at a Glance
 
 ```mermaid
 flowchart LR
     User --> CLI
-    CLI --> ExploreRepository
-    CLI --> CreateCodingPlan
+    CLI --> RunCodingAgent
+    RunCodingAgent --> ExploreRepository
+    RunCodingAgent --> CreateCodingPlan
+    RunCodingAgent --> PlanApproval
+    RunCodingAgent --> ExecuteCodingPlan
+    RunCodingAgent --> GitDiff
     ExploreRepository --> ExplorationResult[RepositoryExploration]
     ExplorationResult --> CreateCodingPlan
     ExploreRepository --> LanguageModel
     CreateCodingPlan --> LanguageModel
+    ExecuteCodingPlan --> LanguageModel
     CreateCodingPlan --> PathInspector[RepositoryPathInspector port]
     ExploreRepository --> ToolRegistry
     LanguageModel --> OpenAIAdapter
@@ -24,6 +29,10 @@ flowchart LR
     SearchCode --> Sandbox
     Sandbox --> Repository[(Local repository)]
     Sandbox -. implements .-> PathInspector
+    ExecuteCodingPlan --> CreateFile
+    ExecuteCodingPlan --> EditFile
+    CreateFile --> Sandbox
+    EditFile --> Sandbox
 ```
 
 The dependency direction is inward:
@@ -47,15 +56,22 @@ src/
   agent/
     application/
       CreateCodingPlan.ts
+      ExecuteCodingPlan.ts
       ExploreRepository.ts
+      RunCodingAgent.ts
       ToolRegistry.ts
     domain/
+      AgentState.ts
       CodingPlan.ts
       ExplorationDecision.ts
       RepositoryPathPolicy.ts
       RepositoryExploration.ts
+      TaskExecutionProposal.ts
     ports/
+      ChangeDiff.ts
+      FileMutationTools.ts
       LanguageModel.ts
+      PlanApproval.ts
       RepositoryPathInspector.ts
       RepositoryTools.ts
       Tool.ts
@@ -66,11 +82,16 @@ src/
         code/
           SearchCodeTool.ts
         filesystem/
+          CreateFileTool.ts
+          EditFileTool.ts
           ListFilesTool.ts
           ReadFileTool.ts
           RepositorySandbox.ts
           walkRepository.ts
+        git/
+          GitDiffTool.ts
   cli/
+    ConsolePlanApproval.ts
     main.ts
   main.ts
 ```
@@ -89,12 +110,14 @@ It:
 2. Confirms the repository exists and is a directory.
 3. Resolves the repository's real path.
 4. Creates one `RepositorySandbox`.
-5. Registers the three read-only tools.
+5. Registers read-only exploration tools and create/edit tools.
 6. Creates `OpenAILanguageModel`, unless a model was injected by a test.
-7. Runs `ExploreRepository`.
-8. Renders the summary and relevant files.
-9. Runs `CreateCodingPlan` with the same model and sandbox-backed path inspector.
-10. Renders ordered tasks, file operations, expected outcomes, and verification strategy.
+7. Creates `RunCodingAgent` with exploration, planning, execution, approval, and diff dependencies.
+8. Validates that the selected path is inside a Git working tree.
+9. Runs exploration and planning.
+10. Renders the plan through `ConsolePlanApproval` and asks `[y/N]`.
+11. On cancellation, prints confirmation and exits without writes or a diff.
+12. On approval, executes tasks sequentially and renders final state, modified files, failures, and diff.
 
 No dependency injection container or factory layer is used. Wiring remains visible because there are only a few dependencies.
 
@@ -144,10 +167,11 @@ Planning invariants are:
 - plan path identity is case-insensitive on every platform to prevent non-portable collisions;
 - `modify` targets must be relevant exploration results and still exist;
 - `create` targets must not already exist;
+- `create` targets must have an existing immediate parent directory;
 - every path must be relative, portable, and outside restricted locations;
 - the original user goal remains authoritative even if the model rewrites it.
 
-The planner does not write files. These constraints define the candidate change set that human approval will consume in Milestone 4.
+The planner does not write files. These constraints define the candidate change set presented to human approval before execution.
 
 ## Core Contracts
 
@@ -211,11 +235,17 @@ interface CodingPlan {
 }
 ```
 
-The plan is a strict Zod object compatible with OpenAI structured outputs. File-level reasons make the future approval boundary reviewable without parsing free-form prose.
+The plan is a strict Zod object compatible with OpenAI structured outputs. File-level reasons make the approval boundary reviewable without parsing free-form prose.
+
+### Task Execution Proposal
+
+After approval, each task produces one strict object containing the task ID and complete content for every approved file. `ExecuteCodingPlan` rejects proposals that add, omit, repeat, rename, or change the operation of a file before writing that task.
+
+Modified files are re-read immediately before their task, so later tasks observe earlier successful changes. Proposal content is limited to 1,000,000 characters per file.
 
 ### Repository Path Inspector
 
-`RepositoryPathInspector` exposes only `exists(relativePath)`. `RepositorySandbox` implements the port, allowing the planner to prevent `create` from overwriting an existing file without depending on filesystem infrastructure. For missing targets, the sandbox resolves the nearest existing ancestor so a new path cannot hide beneath an external or dangling symlink.
+`RepositoryPathInspector` exposes `exists(relativePath)` and `assertCanCreate(relativePath)`. `RepositorySandbox` implements the port, allowing the planner to prevent overwrite and require an existing, safe immediate parent without depending on filesystem infrastructure. For missing targets, the sandbox resolves the nearest existing ancestor so a new path cannot hide beneath an external or dangling symlink.
 
 ### Tool
 
@@ -246,19 +276,44 @@ type ToolResult<T> =
 
 Application workflows can observe expected tool failures without using exceptions as control flow.
 
+### Agent State
+
+`RunCodingAgent` owns explicit state with these statuses:
+
+```text
+exploring -> planning -> awaiting-approval -> executing -> completed
+                                      |             |
+                                      v             v
+                                  cancelled       failed
+```
+
+The domain also reserves `verifying` for Milestone 5. State records exploration, plan, completed and failed task IDs, modified files, final diff, verification attempts, and a controlled failure reason.
+
 ## Read-Only Tools
 
 | Tool | Input | Output | Default bounds |
 | --- | --- | --- | --- |
 | `list_files` | Relative directory path | Files, directories, truncation flag | 200 returned entries, depth 5, 800 inspected entries |
-| `read_file` | Relative file path | Decoded text prefix and truncation flag | First 20,000 bytes |
+| `read_file` | Relative file path | Decoded text prefix and truncation flag | CLI configuration: first 1,000,000 bytes |
 | `search_code` | Relative directory and literal query | Path, line, text, truncation flag | 50 matches, 300 returned entries, up to 1,200 inspected entries, depth 8, first 64,000 bytes per file |
 
 Search is a case-insensitive literal match, not a regular expression. A file is treated as binary only when its inspected prefix contains a NUL byte. Other byte sequences are decoded as UTF-8 and may contain replacement characters.
 
+## Write and Diff Capabilities
+
+| Capability | Behavior | Bound |
+| --- | --- | --- |
+| `create_file` | Writes a temporary file, syncs it, then hard-links it to a new target without overwrite | 1,000,000 characters |
+| `edit_file` | Writes and syncs a temporary file, preserves mode bits, then atomically renames it over the target | 1,000,000 characters |
+| `git_diff` | Compares the selected repository subtree with `HEAD`, or the object-format-specific empty tree for an unborn repository | 5 MB aggregate, 1,000 untracked files, 4,000 inspected entries |
+
+Git is validated before exploration, model calls, approval, or writes. The diff is scoped to the selected path and includes staged, unstaged, and non-ignored untracked file content in that subtree, including pre-existing changes. Untracked paths are containment-checked with `realpath`; symlinks encountered during expansion are rejected.
+
+Create and edit tools receive only paths and complete content already validated against the approved task. There is no delete, rename, arbitrary patch, shell, commit, reset, push, or publish capability.
+
 ## Repository Sandbox
 
-Every read-only tool shares one `RepositorySandbox` created from the selected root.
+Every filesystem tool shares one `RepositorySandbox` created from the selected root.
 
 ### Path Validation
 
@@ -307,6 +362,8 @@ The CLI is designed for repositories the user trusts and is authorized to send t
 
 The sandbox protects against deterministic traversal and symlink escapes. Node.js does not expose a portable descriptor-relative `openat` workflow, so it cannot fully prevent a malicious local process from replacing a validated path between validation and access. Concurrent adversarial filesystem mutation is outside the MVP threat model.
 
+Approved tasks are sequential but not transactional. If a later write fails, earlier writes remain and are recorded in `modifiedFiles`. Non-ignored changes within the selected Git subtree appear in the final diff. There is no automatic rollback. Atomic replacement preserves mode bits, but a new inode may not preserve ownership, ACLs, or extended attributes on every filesystem.
+
 ## Resource Bounds
 
 Resource limits protect cost, latency, and context size:
@@ -317,10 +374,14 @@ Resource limits protect cost, latency, and context size:
 | Listed entries | 200 |
 | Listing depth | 5 |
 | Inspected directory entries | 4 times the configured return limit |
-| Direct file read | 20,000 bytes |
+| Direct file read in the CLI | 1,000,000 bytes |
 | Search matches | 50 |
 | Search traversal | 300 returned entries, up to 1,200 inspected entries, depth 8 |
 | Search content per file | 64,000 bytes |
+| File mutation proposal | 1,000,000 characters per file |
+| Final Git diff | 5,000,000 bytes aggregate |
+| Untracked files in diff | 1,000 |
+| Inspected entries while expanding untracked directories | 4,000 |
 
 When a traversal or content limit is reached, tools set `truncated: true`. Exploration can continue, but the model must reason from incomplete evidence.
 
@@ -339,8 +400,12 @@ Errors are handled at two levels:
 | Exploration limit | Throws a controlled limit error |
 | Invalid plan structure | Zod/OpenAI parse rejects the generation |
 | Unsafe or inconsistent plan path | Planning fails before approval or execution |
+| Approval rejected | State becomes `cancelled`; no write tool runs |
+| Invalid execution proposal | Current task fails before its first write |
+| Write failure | State becomes `failed`; earlier successful writes remain tracked |
+| Diff failure | State becomes `failed` while preserving any execution failure reason |
 
-Later milestones will add an explicit `AgentState` with `failed` and `completed` states. The current read-only exploration and planning workflow has no full state machine yet.
+Milestone 5 will activate the existing `verifying` state and verification-attempt counter.
 
 ## Testing Strategy
 
@@ -372,6 +437,8 @@ Covered behavior includes:
 - NTFS alternate data stream rejection;
 - external symlink rejection;
 - literal search and line numbers;
+- no-overwrite file creation and atomic full-content edits;
+- Git validation, staged/untracked diff content, and symlink containment;
 - registry input/output validation;
 - controlled execution failures.
 
@@ -399,6 +466,16 @@ Planning coverage includes:
 - restricted, traversal, and non-portable path rejection;
 - CLI rendering of ordered tasks and verification strategy.
 
+Execution coverage includes:
+
+- valid and invalid state transitions;
+- approval cancellation with zero writes;
+- sequential tasks observing previous writes;
+- strict approved-file and operation enforcement;
+- partial write failure tracking;
+- pre-write Git validation;
+- final state, modified files, and diff rendering.
+
 ### Verification Commands
 
 ```bash
@@ -422,13 +499,13 @@ The current loop sends accumulated bounded observations back to the model. Conte
 
 Literal search avoids regex injection and external binary dependencies. It is less powerful and less scalable than ripgrep, which is acceptable for the initial language-neutral explorer.
 
-### Full-Content Editing Later
+### Full-Content Editing Before Patch Editing
 
-The planned execution milestone will initially read current content, request complete updated content, generate a diff, and write within the sandbox. Patch-based editing remains a future experiment.
+Execution reads current content, requests complete updated content, validates the entire proposal against the approved task, and writes within the sandbox. This is easier to validate than arbitrary patches but consumes more context. Patch-based editing remains a future experiment.
 
-### No Full Agent State Yet
+### Partial Changes Remain Visible
 
-The current features have a bounded exploration workflow followed by one planning operation. Introducing every future state now would create unused abstractions. `AgentState`, transitions, approval, execution, and verification state belong to the milestones that exercise them.
+Tasks are not rolled back automatically. Preserving successful writes, explicit modified-file tracking, and the final diff makes failure observable without introducing a fragile transaction layer over the filesystem.
 
 ## Planned Evolution
 
@@ -446,12 +523,9 @@ flowchart LR
 
 The remaining planned additions are:
 
-1. Explicit agent state and valid transitions.
-2. Human approval port and CLI adapter.
-3. Sandboxed create and edit tools.
-4. Diff generation and modified-file tracking.
-5. Fixed `npm test` capability with three verification attempts.
-6. Typed `AgentEvent` output through an `EventSink` port.
+1. Fixed `npm test` capability with three verification attempts.
+2. Structured failure analysis and approved-file correction proposals.
+3. Typed `AgentEvent` output through an `EventSink` port.
 
 ## Review Checklist
 

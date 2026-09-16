@@ -1,10 +1,12 @@
-import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { SearchCodeTool } from '../../../../src/agent/infrastructure/tools/code/SearchCodeTool.js';
+import { CreateFileTool } from '../../../../src/agent/infrastructure/tools/filesystem/CreateFileTool.js';
+import { EditFileTool } from '../../../../src/agent/infrastructure/tools/filesystem/EditFileTool.js';
 import { ListFilesTool } from '../../../../src/agent/infrastructure/tools/filesystem/ListFilesTool.js';
 import { ReadFileTool } from '../../../../src/agent/infrastructure/tools/filesystem/ReadFileTool.js';
 import { RepositorySandbox } from '../../../../src/agent/infrastructure/tools/filesystem/RepositorySandbox.js';
@@ -125,6 +127,37 @@ describe('repository exploration tools', () => {
     await expect(tool.execute({ path: '..', query: 'secret' })).rejects.toThrow(
       'Path must stay inside the repository',
     );
+  });
+
+  it('creates new files without overwriting existing paths', async () => {
+    const tool = new CreateFileTool(sandbox);
+
+    await expect(
+      tool.execute({ path: 'src/Email.ts', content: 'export class Email {}\n' }),
+    ).resolves.toEqual({
+      path: 'src/Email.ts',
+      bytesWritten: 22,
+    });
+    await expect(readFile(path.join(repositoryRoot, 'src', 'Email.ts'), 'utf8')).resolves.toBe(
+      'export class Email {}\n',
+    );
+    await expect(
+      tool.execute({ path: 'src/Email.ts', content: 'overwrite' }),
+    ).rejects.toThrow('File already exists: src/Email.ts');
+  });
+
+  it('atomically replaces existing text files', async () => {
+    const tool = new EditFileTool(sandbox);
+
+    await expect(
+      tool.execute({ path: 'src/RegisterUser.ts', content: 'export const changed = true\n' }),
+    ).resolves.toEqual({
+      path: 'src/RegisterUser.ts',
+      bytesWritten: 28,
+    });
+    await expect(
+      readFile(path.join(repositoryRoot, 'src', 'RegisterUser.ts'), 'utf8'),
+    ).resolves.toBe('export const changed = true\n');
   });
 
   it('rejects symlinks that resolve outside the repository', async () => {

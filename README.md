@@ -2,7 +2,7 @@
 
 Mini Coding Agent is a small TypeScript coding agent built to make agentic software engineering understandable. Instead of hiding behavior behind an agent framework, it exposes the loop, tools, structured decisions, safety boundaries, and tests that drive the system.
 
-> Current status: repository exploration and structured planning are functional and read-only. Approval, code changes, and verification are the next milestones.
+> Current status: repository exploration, structured planning, human approval, safe file changes, and final diff generation are functional. Automated verification is the next milestone.
 
 ## Quick Start
 
@@ -45,7 +45,7 @@ Explore another repository:
 npm run dev -- "Add expiration handling to password reset tokens" --repo ../another-project
 ```
 
-The current version reports relevant files, an ordered implementation plan, affected-file operations, and a verification strategy. It does not modify the repository.
+The current version reports relevant files and an ordered implementation plan, asks for approval, executes approved tasks sequentially, and shows the final Git diff. It does not run tests or automatically correct failures yet.
 
 ## What Is Mini Coding Agent?
 
@@ -84,19 +84,24 @@ The goal is educational clarity and credible engineering, not feature parity wit
 | Structured relevance assessment | Available |
 | Bounded exploration loop | Available |
 | Structured coding plan | Available |
-| Human approval | Next milestone |
-| File creation and editing | Planned |
-| Test and correction loop | Planned |
+| Human approval | Available |
+| File creation and editing | Available |
+| Final Git diff | Available |
+| Test and correction loop | Next milestone |
 | Event stream | Planned |
 
 ## Architecture
 
 ```mermaid
 flowchart TD
-    CLI[CLI] --> Explore[ExploreRepository]
-    CLI --> Plan[CreateCodingPlan]
+    CLI[CLI] --> Agent[RunCodingAgent]
+    Agent --> Explore[ExploreRepository]
+    Agent --> Plan[CreateCodingPlan]
+    Agent --> Approval[PlanApproval]
+    Agent --> Execute[ExecuteCodingPlan]
     Explore --> LM[LanguageModel port]
     Plan --> LM
+    Execute --> LM
     LM --> OpenAI[OpenAI adapter]
     Explore --> Registry[ToolRegistry]
     Registry --> List[list_files]
@@ -106,6 +111,11 @@ flowchart TD
     Read --> Sandbox
     Search --> Sandbox
     Plan --> Sandbox
+    Execute --> Create[create_file]
+    Execute --> Edit[edit_file]
+    Create --> Sandbox
+    Edit --> Sandbox
+    Agent --> Diff[git_diff]
     Explore --> Result[RepositoryExploration]
     Result --> Plan
     Plan --> CodingPlan[CodingPlan]
@@ -139,14 +149,15 @@ record the structured observation
 
 The model may choose `list_files`, `read_file`, `search_code`, or `complete`. A completion is rejected if it references files that were not discovered by a tool.
 
-After exploration, a separate structured generation creates ordered tasks. Existing files can only be marked `modify` when exploration identified them, while `create` targets must be safe relative paths that do not already exist. The CLI renders the plan but does not request approval or write files yet.
+After exploration, a separate structured generation creates ordered tasks. Existing files can only be marked `modify` when exploration identified them, while `create` targets must be safe relative paths that do not already exist. The CLI asks for explicit approval, then each task receives a structured full-content proposal restricted to the approved files and operations.
 
 ## Safety
 
 The current implementation follows least capability:
 
 - no generic shell tool;
-- no write, delete, Git mutation, or network tools;
+- no generic shell, delete, Git mutation, or arbitrary network tools;
+- no file change before explicit human approval;
 - repository-relative paths only;
 - `realpath` containment checks;
 - symlinks outside the repository are rejected;
@@ -156,6 +167,9 @@ The current implementation follows least capability:
 - exploration stops after 12 model decisions;
 - planned modifications are limited to explored files;
 - planned creations cannot overwrite existing or restricted paths.
+- execution proposals cannot add files or change approved operations;
+- Git is validated before model calls or writes;
+- the final diff is bounded to 5 MB.
 
 Running an agent against a repository still sends selected repository content to the configured model provider. Only use repositories you are authorized to inspect.
 
@@ -188,8 +202,8 @@ Running an agent against a repository still sends selected repository content to
 | 1. Bootstrap | TypeScript CLI, model port, tool registry | Complete |
 | 2. Exploration | Safe list, read, search, and relevance selection | Complete |
 | 3. Planning | Ordered structured plan and verification strategy | Complete |
-| 4. Execution | Approval, file changes, and diff generation | Next |
-| 5. Verification | Tests, failure analysis, and bounded correction | Planned |
+| 4. Execution | Approval, file changes, and diff generation | Complete |
+| 5. Verification | Tests, failure analysis, and bounded correction | Next |
 | 6. Observability | Typed events and console event sink | Planned |
 | 7. Portfolio polish | Example project and final documentation | In progress |
 
@@ -209,7 +223,7 @@ npm run typecheck
 npm run build
 ```
 
-The test suite is deterministic and does not call OpenAI. It covers model fakes, structured schemas, tool validation, traversal protection, symlink escapes, exploration limits, plan invariants, path existence, and CLI rendering.
+The test suite is deterministic and does not call OpenAI. It covers model fakes, state transitions, structured schemas, tool validation, traversal protection, symlink escapes, plan invariants, approval cancellation, sequential execution, partial failures, Git validation and diff generation, and CLI rendering.
 
 ## Future Experiments
 

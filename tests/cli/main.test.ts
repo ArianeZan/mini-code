@@ -4,6 +4,7 @@ import path from 'node:path';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { ConsolePlanApproval } from '../../src/cli/ConsolePlanApproval.js';
 import { parseCliArguments, resolveRepositoryRoot, runCli } from '../../src/cli/main.js';
 import { FakeLanguageModel } from '../helpers/FakeLanguageModel.js';
 
@@ -84,11 +85,30 @@ describe('CLI', () => {
         ],
         verificationStrategy: 'Run the registration tests.',
       },
+      {
+        taskId: 'task-1',
+        changes: [
+          {
+            path: 'RegisterUser.ts',
+            operation: 'modify',
+            content: 'export const registerUser = () => { throw new Error("invalid email") }',
+          },
+        ],
+      },
     ]);
+    const planApproval = new ConsolePlanApproval(
+      (message) => output.push(message),
+      async () => 'y',
+    );
 
     await runCli(['Add email validation', '--repo', directory], {
       languageModel,
       output: (message) => output.push(message),
+      planApproval,
+      changeDiff: {
+        validate: async () => undefined,
+        generate: async () => 'diff --git a/RegisterUser.ts b/RegisterUser.ts',
+      },
     });
 
     expect(output).toEqual([
@@ -100,13 +120,17 @@ describe('CLI', () => {
       'Found the registration implementation.',
       'Relevant files:',
       '- RegisterUser.ts: Contains the registration operation.',
-      'Creating coding plan...',
       'Plan generated',
       '1. Add validation to registration [task-1]',
       '   - modify RegisterUser.ts: Registration accepts the email input.',
       '   Expected outcome: Invalid emails are rejected.',
       'Verification strategy: Run the registration tests.',
-      'No files were changed.',
+      'Executing approved plan...',
+      'Agent status: completed',
+      'Completed tasks: task-1',
+      'Modified files: RegisterUser.ts',
+      'Final diff:',
+      'diff --git a/RegisterUser.ts b/RegisterUser.ts',
     ]);
   });
 

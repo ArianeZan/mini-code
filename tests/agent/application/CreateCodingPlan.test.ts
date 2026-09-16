@@ -58,6 +58,7 @@ function createPathInspector(
       const pathKey = process.platform === 'win32' ? repositoryPath.toLowerCase() : repositoryPath;
       return paths.has(pathKey);
     },
+    async assertCanCreate(): Promise<void> {},
   };
 }
 
@@ -309,5 +310,36 @@ describe('CreateCodingPlan', () => {
     ).rejects.toThrow(
       'Exploration contains non-portable path casing: src/users/RegisterUser.ts, src/users/registeruser.ts',
     );
+  });
+
+  it('rejects creation when the immediate parent directory is missing', async () => {
+    const model = new FakeLanguageModel([
+      createPlanResponse({
+        tasks: [
+          {
+            id: 'task-1',
+            description: 'Create a nested file.',
+            files: [
+              {
+                path: 'src/missing/Email.ts',
+                operation: 'create',
+                reason: 'Add a nested email value.',
+              },
+            ],
+            verification: { expectedOutcome: 'Email value exists.' },
+          },
+        ],
+      }),
+    ]);
+    const repositoryPaths: RepositoryPathInspector = {
+      exists: async () => false,
+      assertCanCreate: async () => {
+        throw new Error('parent directory is missing');
+      },
+    };
+
+    await expect(
+      new CreateCodingPlan(model, repositoryPaths).execute('Change registration', exploration),
+    ).rejects.toThrow('parent directory is missing');
   });
 });

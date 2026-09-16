@@ -11,7 +11,7 @@ It is a portfolio product rather than a commercial replacement for established c
 | Target product | A CLI agent that progressively explores, plans, modifies, and verifies changes in a local repository |
 | Primary user | Software engineers learning or evaluating agentic system design |
 | Primary value | A compact, inspectable reference implementation of a coding-agent workflow |
-| Current release | Package version `0.1.0`: read-only repository exploration and structured planning |
+| Current release | Package version `0.1.0`: exploration, planning, approval, bounded file execution, and Git diff |
 | Interface | Local command-line application |
 | Model provider | OpenAI through a provider-independent port |
 | Business model | Open-source portfolio and learning project; no monetization is assumed |
@@ -76,7 +76,7 @@ The project provides:
 | --- | --- |
 | Explicit over magical | The agent loop and transitions remain visible in application code |
 | Least capability | Each tool exposes one narrow operation |
-| Human authority | Planned write operations will require an approved plan before execution |
+| Human authority | Write operations require an approved plan before execution |
 | Machine-readable decisions | LLM outputs consumed by code use strict schemas |
 | Bounded autonomy | Every loop has a fixed limit and controlled failure |
 | Provider independence | Core workflow code depends on `LanguageModel`, not the OpenAI SDK |
@@ -85,7 +85,7 @@ The project provides:
 
 ## Current User Journey
 
-The current read-only release supports this journey:
+The current release supports this journey:
 
 ```text
 Describe a coding goal
@@ -101,6 +101,13 @@ Agent returns relevant files and reasons
         |
         v
 Agent returns ordered tasks and verification strategy
+        |
+        v
+User approves or cancels
+        |
+        +---- cancel ----> Agent exits without writes
+        |
+        +---- approve ---> Agent applies approved file operations and shows the diff
 ```
 
 The target MVP extends this journey:
@@ -179,8 +186,8 @@ The project uses engineering and portfolio measures rather than revenue metrics.
 | 1. Bootstrap | The CLI and core contracts run and can be tested | Complete |
 | 2. Repository exploration | The agent identifies likely relevant files without writing | Complete |
 | 3. Planning | The user sees an ordered plan and verification strategy | Complete |
-| 4. Approval and execution | The user approves before bounded file changes | Next |
-| 5. Verification | The agent tests and performs limited self-correction | Planned |
+| 4. Approval and execution | The user approves before bounded file changes | Complete |
+| 5. Verification | The agent tests and performs limited self-correction | Next |
 | 6. Observability | Typed events expose workflow progress | Planned |
 | 7. Portfolio polish | A reproducible demo and finished narrative are available | In progress |
 
