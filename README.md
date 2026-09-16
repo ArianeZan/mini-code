@@ -2,7 +2,7 @@
 
 Mini Coding Agent is a small TypeScript coding agent built to make agentic software engineering understandable. Instead of hiding behavior behind an agent framework, it exposes the loop, tools, structured decisions, safety boundaries, and tests that drive the system.
 
-> Current status: repository exploration is functional and read-only. Planning, approval, code changes, and verification are the next milestones.
+> Current status: repository exploration and structured planning are functional and read-only. Approval, code changes, and verification are the next milestones.
 
 ## Quick Start
 
@@ -36,16 +36,16 @@ export OPENAI_MODEL="gpt-5.6" # Optional
 Explore the current repository:
 
 ```bash
-npm run dev -- "Find where user registration is implemented" --repo .
+npm run dev -- "Prevent users from registering with invalid email addresses" --repo .
 ```
 
 Explore another repository:
 
 ```bash
-npm run dev -- "Find the authentication flow" --repo ../another-project
+npm run dev -- "Add expiration handling to password reset tokens" --repo ../another-project
 ```
 
-The current version reports a summary and the files it considers relevant. It does not modify the repository.
+The current version reports relevant files, an ordered implementation plan, affected-file operations, and a verification strategy. It does not modify the repository.
 
 ## What Is Mini Coding Agent?
 
@@ -83,8 +83,8 @@ The goal is educational clarity and credible engineering, not feature parity wit
 | Literal code search | Available |
 | Structured relevance assessment | Available |
 | Bounded exploration loop | Available |
-| Structured coding plan | Next milestone |
-| Human approval | Planned |
+| Structured coding plan | Available |
+| Human approval | Next milestone |
 | File creation and editing | Planned |
 | Test and correction loop | Planned |
 | Event stream | Planned |
@@ -94,7 +94,9 @@ The goal is educational clarity and credible engineering, not feature parity wit
 ```mermaid
 flowchart TD
     CLI[CLI] --> Explore[ExploreRepository]
+    CLI --> Plan[CreateCodingPlan]
     Explore --> LM[LanguageModel port]
+    Plan --> LM
     LM --> OpenAI[OpenAI adapter]
     Explore --> Registry[ToolRegistry]
     Registry --> List[list_files]
@@ -103,7 +105,10 @@ flowchart TD
     List --> Sandbox[RepositorySandbox]
     Read --> Sandbox
     Search --> Sandbox
+    Plan --> Sandbox
     Explore --> Result[RepositoryExploration]
+    Result --> Plan
+    Plan --> CodingPlan[CodingPlan]
 ```
 
 The application layer depends on ports and structured contracts. OpenAI and filesystem details stay in the outer CLI and infrastructure layers. Tests replace OpenAI with a queue-based `FakeLanguageModel`.
@@ -134,6 +139,8 @@ record the structured observation
 
 The model may choose `list_files`, `read_file`, `search_code`, or `complete`. A completion is rejected if it references files that were not discovered by a tool.
 
+After exploration, a separate structured generation creates ordered tasks. Existing files can only be marked `modify` when exploration identified them, while `create` targets must be safe relative paths that do not already exist. The CLI renders the plan but does not request approval or write files yet.
+
 ## Safety
 
 The current implementation follows least capability:
@@ -146,7 +153,9 @@ The current implementation follows least capability:
 - common secret, dependency, build, and VCS paths are excluded;
 - binary and oversized file reads are constrained;
 - search and traversal results are bounded;
-- exploration stops after 12 model decisions.
+- exploration stops after 12 model decisions;
+- planned modifications are limited to explored files;
+- planned creations cannot overwrite existing or restricted paths.
 
 Running an agent against a repository still sends selected repository content to the configured model provider. Only use repositories you are authorized to inspect.
 
@@ -178,8 +187,8 @@ Running an agent against a repository still sends selected repository content to
 | --- | --- | --- |
 | 1. Bootstrap | TypeScript CLI, model port, tool registry | Complete |
 | 2. Exploration | Safe list, read, search, and relevance selection | Complete |
-| 3. Planning | Ordered structured plan and verification strategy | Next |
-| 4. Execution | Approval, file changes, and diff generation | Planned |
+| 3. Planning | Ordered structured plan and verification strategy | Complete |
+| 4. Execution | Approval, file changes, and diff generation | Next |
 | 5. Verification | Tests, failure analysis, and bounded correction | Planned |
 | 6. Observability | Typed events and console event sink | Planned |
 | 7. Portfolio polish | Example project and final documentation | In progress |
@@ -200,7 +209,7 @@ npm run typecheck
 npm run build
 ```
 
-The test suite is deterministic and does not call OpenAI. It covers model fakes, structured schemas, tool validation, traversal protection, symlink escapes, exploration limits, and CLI rendering.
+The test suite is deterministic and does not call OpenAI. It covers model fakes, structured schemas, tool validation, traversal protection, symlink escapes, exploration limits, plan invariants, path existence, and CLI rendering.
 
 ## Future Experiments
 

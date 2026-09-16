@@ -4,8 +4,8 @@ import path from 'node:path';
 import {
   isRestrictedEnvironmentFile,
   isRestrictedRepositoryName,
-  type RepositorySandbox,
-} from './RepositorySandbox.js';
+} from '../../../domain/RepositoryPathPolicy.js';
+import type { RepositorySandbox } from './RepositorySandbox.js';
 
 export interface RepositoryEntry {
   readonly absolutePath: string;

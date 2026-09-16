@@ -66,6 +66,24 @@ describe('CLI', () => {
           summary: 'Found the registration implementation.',
         },
       },
+      {
+        goal: 'Add email validation',
+        tasks: [
+          {
+            id: 'task-1',
+            description: 'Add validation to registration',
+            files: [
+              {
+                path: 'RegisterUser.ts',
+                operation: 'modify',
+                reason: 'Registration accepts the email input.',
+              },
+            ],
+            verification: { expectedOutcome: 'Invalid emails are rejected.' },
+          },
+        ],
+        verificationStrategy: 'Run the registration tests.',
+      },
     ]);
 
     await runCli(['Add email validation', '--repo', directory], {
@@ -82,6 +100,13 @@ describe('CLI', () => {
       'Found the registration implementation.',
       'Relevant files:',
       '- RegisterUser.ts: Contains the registration operation.',
+      'Creating coding plan...',
+      'Plan generated',
+      '1. Add validation to registration [task-1]',
+      '   - modify RegisterUser.ts: Registration accepts the email input.',
+      '   Expected outcome: Invalid emails are rejected.',
+      'Verification strategy: Run the registration tests.',
+      'No files were changed.',
     ]);
   });
 

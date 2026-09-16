@@ -1,6 +1,6 @@
 # Technical Architecture
 
-Mini Coding Agent uses a small Ports and Adapters structure to keep the agent workflow explicit, provider-independent, and testable. The current implementation delivers read-only repository exploration; planning, state transitions, writes, verification, and events will extend the same boundaries in later milestones.
+Mini Coding Agent uses a small Ports and Adapters structure to keep the agent workflow explicit, provider-independent, and testable. The current implementation delivers read-only repository exploration and structured planning; state transitions, approval, writes, verification, and events will extend the same boundaries in later milestones.
 
 ## Architecture at a Glance
 
@@ -8,7 +8,12 @@ Mini Coding Agent uses a small Ports and Adapters structure to keep the agent wo
 flowchart LR
     User --> CLI
     CLI --> ExploreRepository
+    CLI --> CreateCodingPlan
+    ExploreRepository --> ExplorationResult[RepositoryExploration]
+    ExplorationResult --> CreateCodingPlan
     ExploreRepository --> LanguageModel
+    CreateCodingPlan --> LanguageModel
+    CreateCodingPlan --> PathInspector[RepositoryPathInspector port]
     ExploreRepository --> ToolRegistry
     LanguageModel --> OpenAIAdapter
     ToolRegistry --> ListFiles
@@ -18,6 +23,7 @@ flowchart LR
     ReadFile --> Sandbox
     SearchCode --> Sandbox
     Sandbox --> Repository[(Local repository)]
+    Sandbox -. implements .-> PathInspector
 ```
 
 The dependency direction is inward:
@@ -40,13 +46,17 @@ Application code does not import the OpenAI SDK or Node filesystem adapters. Rep
 src/
   agent/
     application/
+      CreateCodingPlan.ts
       ExploreRepository.ts
       ToolRegistry.ts
     domain/
+      CodingPlan.ts
       ExplorationDecision.ts
+      RepositoryPathPolicy.ts
       RepositoryExploration.ts
     ports/
       LanguageModel.ts
+      RepositoryPathInspector.ts
       RepositoryTools.ts
       Tool.ts
     infrastructure/
@@ -83,6 +93,8 @@ It:
 6. Creates `OpenAILanguageModel`, unless a model was injected by a test.
 7. Runs `ExploreRepository`.
 8. Renders the summary and relevant files.
+9. Runs `CreateCodingPlan` with the same model and sandbox-backed path inspector.
+10. Renders ordered tasks, file operations, expected outcomes, and verification strategy.
 
 No dependency injection container or factory layer is used. Wiring remains visible because there are only a few dependencies.
 
@@ -118,6 +130,24 @@ The workflow records every file returned by listing, reading, or searching. A `c
 This prevents a plausible but invented model path from becoming a trusted exploration result.
 
 Windows comparisons are case-insensitive. Returned paths use the canonical casing observed from the filesystem tools.
+
+### 4. Structured Planning
+
+`CreateCodingPlan` sends the original goal and validated exploration result through `CodingPlanSchema`. The returned plan is normalized and checked before the CLI displays it.
+
+Planning invariants are:
+
+- task IDs are unique;
+- each task references at least one file;
+- one task cannot reference the same file twice;
+- separate tasks cannot create the same path twice;
+- plan path identity is case-insensitive on every platform to prevent non-portable collisions;
+- `modify` targets must be relevant exploration results and still exist;
+- `create` targets must not already exist;
+- every path must be relative, portable, and outside restricted locations;
+- the original user goal remains authoritative even if the model rewrites it.
+
+The planner does not write files. These constraints define the candidate change set that human approval will consume in Milestone 4.
 
 ## Core Contracts
 
@@ -159,6 +189,33 @@ OpenAI strict structured outputs require an object at the root. The decision is 
 ```
 
 The LLM does not return Markdown that must be manually parsed.
+
+### Coding Plan
+
+```ts
+interface CodingPlan {
+  goal: string
+  tasks: Array<{
+    id: string
+    description: string
+    files: Array<{
+      path: string
+      operation: 'create' | 'modify'
+      reason: string
+    }>
+    verification: {
+      expectedOutcome: string
+    }
+  }>
+  verificationStrategy: string
+}
+```
+
+The plan is a strict Zod object compatible with OpenAI structured outputs. File-level reasons make the future approval boundary reviewable without parsing free-form prose.
+
+### Repository Path Inspector
+
+`RepositoryPathInspector` exposes only `exists(relativePath)`. `RepositorySandbox` implements the port, allowing the planner to prevent `create` from overwriting an existing file without depending on filesystem infrastructure. For missing targets, the sandbox resolves the nearest existing ancestor so a new path cannot hide beneath an external or dangling symlink.
 
 ### Tool
 
@@ -280,8 +337,10 @@ Errors are handled at two levels:
 | Invalid LLM structure | Zod/OpenAI parse rejects the generation |
 | Invented completion path | Adds `completion_rejected` observation and continues |
 | Exploration limit | Throws a controlled limit error |
+| Invalid plan structure | Zod/OpenAI parse rejects the generation |
+| Unsafe or inconsistent plan path | Planning fails before approval or execution |
 
-Later milestones will add an explicit `AgentState` with `failed` and `completed` states. The current exploration milestone has no full workflow state machine yet.
+Later milestones will add an explicit `AgentState` with `failed` and `completed` states. The current read-only exploration and planning workflow has no full state machine yet.
 
 ## Testing Strategy
 
@@ -318,7 +377,7 @@ Covered behavior includes:
 
 ### Application Boundary
 
-Exploration tests combine real tools with `FakeLanguageModel`.
+Application tests combine real or focused repository boundaries with `FakeLanguageModel`.
 
 Covered behavior includes:
 
@@ -329,6 +388,16 @@ Covered behavior includes:
 - Windows path casing;
 - finite positive step limits;
 - termination at the configured maximum.
+
+Planning coverage includes:
+
+- OpenAI-compatible structured plan schema;
+- canonical user goals and paths;
+- unique task IDs and task-local file references;
+- explored-file requirements for modifications;
+- existence checks for modifications and creations;
+- restricted, traversal, and non-portable path rejection;
+- CLI rendering of ordered tasks and verification strategy.
 
 ### Verification Commands
 
@@ -359,7 +428,7 @@ The planned execution milestone will initially read current content, request com
 
 ### No Full Agent State Yet
 
-The current feature has one bounded exploration workflow. Introducing every future state now would create unused abstractions. `AgentState`, transitions, approval, execution, and verification state belong to the milestones that exercise them.
+The current features have a bounded exploration workflow followed by one planning operation. Introducing every future state now would create unused abstractions. `AgentState`, transitions, approval, execution, and verification state belong to the milestones that exercise them.
 
 ## Planned Evolution
 
@@ -375,15 +444,14 @@ flowchart LR
     Verify -->|fail, limit reached| Failed
 ```
 
-The planned additions are:
+The remaining planned additions are:
 
-1. `CodingPlan` and ordered `CodingTask` schemas.
-2. Explicit agent state and valid transitions.
-3. Human approval port and CLI adapter.
-4. Sandboxed create and edit tools.
-5. Diff generation and modified-file tracking.
-6. Fixed `npm test` capability with three verification attempts.
-7. Typed `AgentEvent` output through an `EventSink` port.
+1. Explicit agent state and valid transitions.
+2. Human approval port and CLI adapter.
+3. Sandboxed create and edit tools.
+4. Diff generation and modified-file tracking.
+5. Fixed `npm test` capability with three verification attempts.
+6. Typed `AgentEvent` output through an `EventSink` port.
 
 ## Review Checklist
 

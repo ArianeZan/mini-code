@@ -1,13 +1,13 @@
 # User Guide
 
-Mini Coding Agent currently explores a trusted local repository and reports files that are likely relevant to a coding goal. It does not create, edit, delete, test, or commit files in the current release.
+Mini Coding Agent currently explores a trusted local repository and generates a structured implementation plan for a coding goal. It does not create, edit, delete, test, or commit files in the current release.
 
 ## Quick Path
 
 1. Install dependencies with `npm install`.
 2. Export `OPENAI_API_KEY` in your shell.
 3. Run `npm run dev -- "your goal" --repo path/to/repository`.
-4. Review the exploration summary and relevant-file reasons.
+4. Review the exploration summary, affected files, ordered tasks, and verification strategy.
 
 ## Requirements
 
@@ -15,7 +15,7 @@ Mini Coding Agent currently explores a trusted local repository and reports file
 | --- | --- |
 | Node.js | 20.19.0 |
 | npm | Included with a supported Node.js installation |
-| OpenAI API key | Required for normal CLI exploration |
+| OpenAI API key | Required for normal CLI exploration and planning |
 | Repository | Local, readable, and trusted |
 | Internet | Required only for OpenAI API calls |
 
@@ -66,19 +66,19 @@ Do not commit API keys. `.env` is ignored by Git, but this project intentionally
 Use the current directory as the repository:
 
 ```bash
-npm run dev -- "Find where user registration is implemented"
+npm run dev -- "Prevent users from registering with invalid email addresses"
 ```
 
 Select another repository:
 
 ```bash
-npm run dev -- "Find the authentication flow" --repo ../another-project
+npm run dev -- "Add expiration handling to password reset tokens" --repo ../another-project
 ```
 
 Use an absolute path when needed:
 
 ```powershell
-npm run dev -- "Find email validation" --repo "C:\Users\you\Projects\sample-app"
+npm run dev -- "Prevent registration with invalid email addresses" --repo "C:\Users\you\Projects\sample-app"
 ```
 
 The `--` after `npm run dev` separates npm arguments from Mini Coding Agent arguments.
@@ -89,7 +89,7 @@ Build and execute the generated entry point:
 
 ```bash
 npm run build
-node dist/main.js "Find the authentication flow" --repo .
+node dist/main.js "Add expiration handling to password reset tokens" --repo .
 ```
 
 For local development, npm can expose the `mini-code` binary globally:
@@ -97,7 +97,7 @@ For local development, npm can expose the `mini-code` binary globally:
 ```bash
 npm run build
 npm link
-mini-code "Find the authentication flow" --repo .
+mini-code "Add expiration handling to password reset tokens" --repo .
 ```
 
 Rebuild after changing source files when using the linked binary.
@@ -110,32 +110,32 @@ mini-code [options] <goal>
 
 | Argument or option | Required | Meaning |
 | --- | --- | --- |
-| `<goal>` | Yes | Natural-language description of what you want to locate or understand |
+| `<goal>` | Yes | Natural-language description of the coding change to explore and plan |
 | `--repo <path>` | No | Repository root; defaults to the current working directory |
 | `-h, --help` | No | Display CLI help |
 
 Examples:
 
 ```bash
-mini-code "Find where users are persisted"
-mini-code "Identify the files involved in password reset" --repo ../api
-mini-code "Locate validation for invoice totals" --repo ../billing-service
+mini-code "Reject invalid email addresses during registration"
+mini-code "Add expiration handling to password reset tokens" --repo ../api
+mini-code "Reject invoices with negative totals" --repo ../billing-service
 ```
 
 ## Writing a Useful Goal
 
-Good exploration goals describe behavior and domain concepts:
+Good goals describe a concrete behavior change and its domain context:
 
 ```text
-Find where users register and where email addresses are validated
+Prevent users from registering with invalid email addresses
 ```
 
 ```text
-Identify the endpoint, use case, and tests involved in password reset
+Add expiration handling to password reset tokens
 ```
 
 ```text
-Find how invoice totals are calculated and validated
+Reject invoices whose line items produce a negative total
 ```
 
 Avoid goals that assume a path the agent has not discovered:
@@ -144,13 +144,13 @@ Avoid goals that assume a path the agent has not discovered:
 Read src/foo/bar.ts
 ```
 
-Avoid asking the current version to implement a change:
+The current release can plan implementation-oriented goals:
 
 ```text
 Add email validation and update the tests
 ```
 
-You may provide an implementation-oriented goal, but the current release will only identify relevant files. Planning and execution are not available yet.
+The result is a proposed plan only. Review it as untrusted model output before relying on it; approval and execution are not available yet.
 
 ## Understanding the Output
 
@@ -158,7 +158,7 @@ A typical session looks like:
 
 ```text
 Mini Coding Agent
-Goal: Find where user registration is implemented
+Goal: Prevent users from registering with invalid email addresses
 Repository: C:\Projects\sample-app
 Exploring repository...
 Exploration complete
@@ -166,6 +166,17 @@ Registration is handled by the users application module and covered by its tests
 Relevant files:
 - src/users/RegisterUser.ts: Contains the registration workflow.
 - src/users/RegisterUser.test.ts: Verifies registration behavior.
+Creating coding plan...
+Plan generated
+1. Introduce validated email values [task-1]
+   - create src/users/Email.ts: Represent a validated email address.
+   - modify src/users/RegisterUser.ts: Validate input before registration.
+   Expected outcome: Invalid email addresses are rejected.
+2. Cover invalid registration [task-2]
+   - modify src/users/RegisterUser.test.ts: Document invalid-email behavior.
+   Expected outcome: Registration tests cover valid and invalid addresses.
+Verification strategy: Run the registration unit tests.
+No files were changed.
 ```
 
 The output contains:
@@ -177,8 +188,14 @@ The output contains:
 | Summary | The model's concise interpretation of the discovered evidence |
 | Relevant files | Only files observed through a registered tool |
 | Reason | Why each file appears related to the goal |
+| Plan tasks | Ordered implementation steps with nonempty, plan-local unique IDs |
+| File operation | Whether a task expects to create or modify a path |
+| Expected outcome | The behavior that should hold after each task |
+| Verification strategy | How the completed change should be checked |
 
 The model can complete with no relevant files when the available evidence does not identify a match.
+
+The planner may propose new files, but it cannot classify an existing path as new. Modifications are limited to files identified by exploration. Paths outside the repository, restricted locations, and non-portable Windows names are rejected before display.
 
 ## What the Agent Reads
 
@@ -305,7 +322,6 @@ No standard verification command calls OpenAI.
 - Search is literal and does not support regular expressions.
 - Only a fixed set of read-only tools exists.
 - There is no persistent session or memory.
-- There is no structured coding plan yet.
 - There is no approval or execution workflow yet.
 - There is no event log beyond current CLI output.
 

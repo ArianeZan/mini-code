@@ -3,6 +3,7 @@ import path from 'node:path';
 
 import { Command, CommanderError } from 'commander';
 
+import { CreateCodingPlan } from '../agent/application/CreateCodingPlan.js';
 import { ExploreRepository } from '../agent/application/ExploreRepository.js';
 import { ToolRegistry } from '../agent/application/ToolRegistry.js';
 import { OpenAILanguageModel } from '../agent/infrastructure/llm/OpenAILanguageModel.js';
@@ -104,10 +105,26 @@ export async function runCli(
 
   if (exploration.relevantFiles.length === 0) {
     output('- None identified');
-    return;
+  } else {
+    exploration.relevantFiles.forEach((file) => {
+      output(`- ${file.path}: ${file.reason}`);
+    });
   }
 
-  exploration.relevantFiles.forEach((file) => {
-    output(`- ${file.path}: ${file.reason}`);
+  output('Creating coding plan...');
+  const plan = await new CreateCodingPlan(languageModel, sandbox).execute(
+    options.goal,
+    exploration,
+  );
+
+  output('Plan generated');
+  plan.tasks.forEach((task, index) => {
+    output(`${index + 1}. ${task.description} [${task.id}]`);
+    task.files.forEach((file) => {
+      output(`   - ${file.operation} ${file.path}: ${file.reason}`);
+    });
+    output(`   Expected outcome: ${task.verification.expectedOutcome}`);
   });
+  output(`Verification strategy: ${plan.verificationStrategy}`);
+  output('No files were changed.');
 }

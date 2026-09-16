@@ -11,7 +11,7 @@ It is a portfolio product rather than a commercial replacement for established c
 | Target product | A CLI agent that progressively explores, plans, modifies, and verifies changes in a local repository |
 | Primary user | Software engineers learning or evaluating agentic system design |
 | Primary value | A compact, inspectable reference implementation of a coding-agent workflow |
-| Current release | Package version `0.1.0`: read-only repository exploration |
+| Current release | Package version `0.1.0`: read-only repository exploration and structured planning |
 | Interface | Local command-line application |
 | Model provider | OpenAI through a provider-independent port |
 | Business model | Open-source portfolio and learning project; no monetization is assumed |
@@ -98,6 +98,9 @@ Agent lists, searches, and reads bounded content
         |
         v
 Agent returns relevant files and reasons
+        |
+        v
+Agent returns ordered tasks and verification strategy
 ```
 
 The target MVP extends this journey:
@@ -175,8 +178,8 @@ The project uses engineering and portfolio measures rather than revenue metrics.
 | --- | --- | --- |
 | 1. Bootstrap | The CLI and core contracts run and can be tested | Complete |
 | 2. Repository exploration | The agent identifies likely relevant files without writing | Complete |
-| 3. Planning | The user sees an ordered plan and verification strategy | Next |
-| 4. Approval and execution | The user approves before bounded file changes | Planned |
+| 3. Planning | The user sees an ordered plan and verification strategy | Complete |
+| 4. Approval and execution | The user approves before bounded file changes | Next |
 | 5. Verification | The agent tests and performs limited self-correction | Planned |
 | 6. Observability | Typed events expose workflow progress | Planned |
 | 7. Portfolio polish | A reproducible demo and finished narrative are available | In progress |

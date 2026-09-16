@@ -69,6 +69,17 @@ describe('repository exploration tools', () => {
     });
   });
 
+  it('reports whether safe repository paths exist', async () => {
+    await expect(sandbox.exists('src/RegisterUser.ts')).resolves.toBe(true);
+    await expect(sandbox.exists('src/NewUser.ts')).resolves.toBe(false);
+    await expect(sandbox.exists('src/RegisterUser.ts/NewUser.ts')).rejects.toThrow(
+      'Parent path is not a directory',
+    );
+    await expect(sandbox.exists('../outside.ts')).rejects.toThrow(
+      'Path must stay inside the repository',
+    );
+  });
+
   it('rejects traversal, restricted files, and binary content', async () => {
     const tool = new ReadFileTool(sandbox);
 
@@ -125,6 +136,9 @@ describe('repository exploration tools', () => {
       const tool = new ReadFileTool(sandbox);
 
       await expect(tool.execute({ path: 'linked/secret.ts' })).rejects.toThrow(
+        'Path resolves outside the repository',
+      );
+      await expect(sandbox.exists('linked/new.ts')).rejects.toThrow(
         'Path resolves outside the repository',
       );
     } finally {
