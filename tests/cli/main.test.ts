@@ -5,6 +5,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { parseCliArguments, resolveRepositoryRoot, runCli } from '../../src/cli/main.js';
+import { FakeLanguageModel } from '../helpers/FakeLanguageModel.js';
 
 describe('CLI', () => {
   const temporaryPaths: string[] = [];
@@ -50,22 +51,44 @@ describe('CLI', () => {
   it('renders the validated goal and repository', async () => {
     const directory = await mkdtemp(path.join(tmpdir(), 'mini-code-cli-'));
     temporaryPaths.push(directory);
+    await writeFile(path.join(directory, 'RegisterUser.ts'), 'export const registerUser = () => {}');
     const output: string[] = [];
+    const languageModel = new FakeLanguageModel([
+      {
+        decision: { action: 'list_files', path: '.' },
+      },
+      {
+        decision: {
+          action: 'complete',
+          relevantFiles: [
+            { path: 'RegisterUser.ts', reason: 'Contains the registration operation.' },
+          ],
+          summary: 'Found the registration implementation.',
+        },
+      },
+    ]);
 
-    await runCli(['Add email validation', '--repo', directory], (message) => output.push(message));
+    await runCli(['Add email validation', '--repo', directory], {
+      languageModel,
+      output: (message) => output.push(message),
+    });
 
     expect(output).toEqual([
       'Mini Coding Agent',
       'Goal: Add email validation',
       `Repository: ${await resolveRepositoryRoot(directory)}`,
-      'Bootstrap ready. Repository exploration arrives in Milestone 2.',
+      'Exploring repository...',
+      'Exploration complete',
+      'Found the registration implementation.',
+      'Relevant files:',
+      '- RegisterUser.ts: Contains the registration operation.',
     ]);
   });
 
   it('treats help as a successful CLI exit', async () => {
     const stdout = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
 
-    await expect(runCli(['--help'], vi.fn())).resolves.toBeUndefined();
+    await expect(runCli(['--help'], { output: vi.fn() })).resolves.toBeUndefined();
 
     expect(stdout).toHaveBeenCalled();
     stdout.mockRestore();

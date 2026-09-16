@@ -3,9 +3,23 @@ import path from 'node:path';
 
 import { Command, CommanderError } from 'commander';
 
+import { ExploreRepository } from '../agent/application/ExploreRepository.js';
+import { ToolRegistry } from '../agent/application/ToolRegistry.js';
+import { OpenAILanguageModel } from '../agent/infrastructure/llm/OpenAILanguageModel.js';
+import { SearchCodeTool } from '../agent/infrastructure/tools/code/SearchCodeTool.js';
+import { ListFilesTool } from '../agent/infrastructure/tools/filesystem/ListFilesTool.js';
+import { ReadFileTool } from '../agent/infrastructure/tools/filesystem/ReadFileTool.js';
+import { RepositorySandbox } from '../agent/infrastructure/tools/filesystem/RepositorySandbox.js';
+import type { LanguageModel } from '../agent/ports/LanguageModel.js';
+
 export interface CliOptions {
   readonly goal: string;
   readonly repositoryRoot: string;
+}
+
+export interface CliDependencies {
+  readonly languageModel?: LanguageModel;
+  readonly output?: (message: string) => void;
 }
 
 export function parseCliArguments(
@@ -53,7 +67,7 @@ export async function resolveRepositoryRoot(repositoryRoot: string): Promise<str
 
 export async function runCli(
   argv: readonly string[],
-  output: (message: string) => void = console.log,
+  dependencies: CliDependencies = {},
 ): Promise<void> {
   let options;
 
@@ -68,9 +82,32 @@ export async function runCli(
   }
 
   const repositoryRoot = await resolveRepositoryRoot(options.repositoryRoot);
+  const output = dependencies.output ?? console.log;
 
   output('Mini Coding Agent');
   output(`Goal: ${options.goal}`);
   output(`Repository: ${repositoryRoot}`);
-  output('Bootstrap ready. Repository exploration arrives in Milestone 2.');
+  output('Exploring repository...');
+
+  const sandbox = await RepositorySandbox.create(repositoryRoot);
+  const tools = new ToolRegistry();
+  tools.register(new ListFilesTool(sandbox));
+  tools.register(new ReadFileTool(sandbox));
+  tools.register(new SearchCodeTool(sandbox));
+
+  const languageModel = dependencies.languageModel ?? new OpenAILanguageModel();
+  const exploration = await new ExploreRepository(languageModel, tools).execute(options.goal);
+
+  output('Exploration complete');
+  output(exploration.summary);
+  output('Relevant files:');
+
+  if (exploration.relevantFiles.length === 0) {
+    output('- None identified');
+    return;
+  }
+
+  exploration.relevantFiles.forEach((file) => {
+    output(`- ${file.path}: ${file.reason}`);
+  });
 }
