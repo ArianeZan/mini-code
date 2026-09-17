@@ -8,6 +8,7 @@ import { ExecuteCodingPlan } from '../agent/application/ExecuteCodingPlan.js';
 import { ExploreRepository } from '../agent/application/ExploreRepository.js';
 import { RunCodingAgent } from '../agent/application/RunCodingAgent.js';
 import { ToolRegistry } from '../agent/application/ToolRegistry.js';
+import { VerifyChanges } from '../agent/application/VerifyChanges.js';
 import { OpenAILanguageModel } from '../agent/infrastructure/llm/OpenAILanguageModel.js';
 import { SearchCodeTool } from '../agent/infrastructure/tools/code/SearchCodeTool.js';
 import { CreateFileTool } from '../agent/infrastructure/tools/filesystem/CreateFileTool.js';
@@ -16,9 +17,11 @@ import { ListFilesTool } from '../agent/infrastructure/tools/filesystem/ListFile
 import { ReadFileTool } from '../agent/infrastructure/tools/filesystem/ReadFileTool.js';
 import { RepositorySandbox } from '../agent/infrastructure/tools/filesystem/RepositorySandbox.js';
 import { GitDiffTool } from '../agent/infrastructure/tools/git/GitDiffTool.js';
+import { RunTestsTool } from '../agent/infrastructure/tools/testing/RunTestsTool.js';
 import type { ChangeDiff } from '../agent/ports/ChangeDiff.js';
 import type { LanguageModel } from '../agent/ports/LanguageModel.js';
 import type { PlanApproval } from '../agent/ports/PlanApproval.js';
+import type { TestRunner } from '../agent/ports/TestingTools.js';
 import { ConsolePlanApproval } from './ConsolePlanApproval.js';
 
 export interface CliOptions {
@@ -31,6 +34,7 @@ export interface CliDependencies {
   readonly output?: (message: string) => void;
   readonly planApproval?: PlanApproval;
   readonly changeDiff?: ChangeDiff;
+  readonly testRunner?: TestRunner;
 }
 
 export function parseCliArguments(
@@ -113,6 +117,11 @@ export async function runCli(
     exploreRepository: new ExploreRepository(languageModel, tools),
     createCodingPlan: new CreateCodingPlan(languageModel, sandbox),
     executeCodingPlan: new ExecuteCodingPlan(languageModel, tools),
+    verifyChanges: new VerifyChanges(
+      languageModel,
+      tools,
+      dependencies.testRunner ?? new RunTestsTool(repositoryRoot),
+    ),
     planApproval: dependencies.planApproval ?? new ConsolePlanApproval(output),
     changeDiff: dependencies.changeDiff ?? new GitDiffTool(repositoryRoot),
   });
@@ -126,8 +135,27 @@ export async function runCli(
   output(`Completed tasks: ${state.execution.completedTaskIds.join(', ') || 'none'}`);
   output(`Modified files: ${state.execution.modifiedFiles.join(', ') || 'none'}`);
 
+  if (state.verification.attempts > 0) {
+    output(
+      `Verification: ${state.verification.lastResult?.passed ? 'passed' : 'failed'} after ${state.verification.attempts} attempt(s)`,
+    );
+    state.verification.corrections.forEach((correction) => {
+      output(`Correction analysis after attempt ${correction.attempt}: ${correction.analysis}`);
+    });
+  }
+
   if (state.failureReason) {
     output(`Failure: ${state.failureReason}`);
+    const lastOutput = [
+      state.verification.lastResult?.stdout,
+      state.verification.lastResult?.stderr,
+    ]
+      .filter((output): output is string => Boolean(output))
+      .join('\n');
+    if (lastOutput) {
+      output('Last test output:');
+      output(lastOutput);
+    }
   }
 
   output('Final diff:');

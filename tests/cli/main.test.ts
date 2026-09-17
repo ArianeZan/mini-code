@@ -109,6 +109,17 @@ describe('CLI', () => {
         validate: async () => undefined,
         generate: async () => 'diff --git a/RegisterUser.ts b/RegisterUser.ts',
       },
+      testRunner: {
+        run: async () => ({
+          passed: true,
+          exitCode: 0,
+          stdout: 'tests passed',
+          stderr: '',
+          timedOut: false,
+          outputTruncated: false,
+          durationMs: 10,
+        }),
+      },
     });
 
     expect(output).toEqual([
@@ -129,6 +140,7 @@ describe('CLI', () => {
       'Agent status: completed',
       'Completed tasks: task-1',
       'Modified files: RegisterUser.ts',
+      'Verification: passed after 1 attempt(s)',
       'Final diff:',
       'diff --git a/RegisterUser.ts b/RegisterUser.ts',
     ]);

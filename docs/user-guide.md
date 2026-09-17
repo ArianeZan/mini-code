@@ -1,6 +1,6 @@
 # User Guide
 
-Mini Coding Agent explores a trusted Git repository, generates a structured implementation plan, requests human approval, applies approved file changes, and displays the final diff. It does not run tests, delete files, create commits, or correct failures automatically in the current release.
+Mini Coding Agent explores a trusted Git repository, generates a structured plan, requests human approval, applies approved changes, runs bounded tests, corrects failures when possible, and displays the final diff. It does not delete files, create commits, or accept arbitrary commands.
 
 ## Quick Path
 
@@ -9,7 +9,7 @@ Mini Coding Agent explores a trusted Git repository, generates a structured impl
 3. Run `npm run dev -- "your goal" --repo path/to/repository`.
 4. Review the exploration summary, affected files, ordered tasks, and verification strategy.
 5. Enter `y` or `yes` to execute; any other response cancels without writes.
-6. If approved, review the final status, modified files, and Git diff. Cancellation prints a confirmation and exits without a diff.
+6. If approved, review verification attempts, corrections, final status, modified files, and Git diff. Cancellation prints a confirmation and exits without a diff.
 
 ## Requirements
 
@@ -18,8 +18,8 @@ Mini Coding Agent explores a trusted Git repository, generates a structured impl
 | Node.js | 20.19.0 |
 | npm | Included with a supported Node.js installation |
 | Git | A working tree containing the selected repository path |
-| OpenAI API key | Required for normal CLI exploration and planning |
-| Repository | Local, readable, and trusted |
+| OpenAI API key | Required for model-driven exploration, planning, execution, and correction |
+| Repository | Local, readable, executable, and trusted |
 | Internet | Required only for OpenAI API calls |
 
 The standard test suite does not require an API key or internet connection.
@@ -169,7 +169,6 @@ Registration is handled by the users application module and covered by its tests
 Relevant files:
 - src/users/RegisterUser.ts: Contains the registration workflow.
 - src/users/RegisterUser.test.ts: Verifies registration behavior.
-Creating coding plan...
 Plan generated
 1. Introduce validated email values [task-1]
    - create src/users/Email.ts: Represent a validated email address.
@@ -184,6 +183,8 @@ Executing approved plan...
 Agent status: completed
 Completed tasks: task-1, task-2
 Modified files: src/users/Email.ts, src/users/RegisterUser.ts, src/users/RegisterUser.test.ts
+Verification: passed after 2 attempt(s)
+Correction analysis after attempt 1: The invalid-email branch returned instead of throwing.
 Final diff:
 diff --git a/src/users/RegisterUser.ts b/src/users/RegisterUser.ts
 ...
@@ -204,6 +205,8 @@ The output contains:
 | Verification strategy | How the completed change should be checked |
 | Agent status | Whether approved execution completed or failed; cancellation prints a separate confirmation |
 | Modified files | Files successfully written before completion or failure |
+| Verification | Whether tests passed and how many attempts ran |
+| Correction analysis | Model analysis after a failed attempt; rejected proposals may modify no files |
 | Final diff | Bounded Git diff against `HEAD`, scoped to the selected path, including staged, unstaged, and non-ignored untracked content |
 
 The model can complete with no relevant files when the available evidence does not identify a match.
@@ -213,6 +216,8 @@ The planner may propose new files, but it cannot classify an existing path as ne
 New files can only be created when their immediate parent directory already exists. The agent has no directory-creation capability.
 
 During execution, the model must return complete content for exactly the approved files and operations. Extra files, missing files, repeated files, and operation changes are rejected before that task writes.
+
+After execution, the agent runs `npm test`. If it fails, the model may edit a subset of approved files and tests run again. The third failed test run ends the workflow without another correction.
 
 ## What the Agent Reads
 
@@ -246,10 +251,12 @@ The restricted-path policy is defense in depth, not a data-loss-prevention produ
 
 Approved tasks execute sequentially. A task with multiple files is not transactional: if a later write fails, earlier writes remain and are reported. The agent does not automatically roll back changes. Atomic edits preserve basic mode bits, but replacement may not preserve ownership, ACLs, or extended attributes on every filesystem.
 
+Running `npm test` executes repository-controlled code. Only run the agent against repositories you trust to execute locally. Each attempt has a 120-second timeout and a 200 KB combined output limit. Resistant descendant processes may survive termination on Windows, so the timeout is a workflow bound rather than a hostile-code sandbox.
+
 The current agent cannot:
 
-- execute shell commands;
-- run tests;
+- accept or execute an arbitrary shell command;
+- run any test command other than the repository's fixed `npm test` script;
 - delete files;
 - mutate Git state;
 - push code;
@@ -333,6 +340,14 @@ Try removing `OPENAI_MODEL` to return to the documented default.
 
 Review `Modified files`, `Failure`, and `Final diff`. Multi-file tasks do not roll back earlier successful writes. Resolve or revert changes manually before running the agent again.
 
+### Tests still fail after three attempts
+
+The agent applies at most two corrections. Review `Failure`, `Last test output`, correction analyses, modified files, and the final diff. Fix or revert the remaining issue manually before another run.
+
+### Test execution times out or truncates output
+
+The attempt fails when `npm test` exceeds 120 seconds or 200 KB of combined output. Reduce hanging or noisy tests before retrying. These bounds cannot currently be changed through the CLI.
+
 ## Development and Offline Tests
 
 Normal tests use `FakeLanguageModel`, so they are fast and deterministic:
@@ -349,7 +364,7 @@ npm run build
 npm audit
 ```
 
-No standard verification command calls OpenAI.
+The project's own standard verification commands do not call OpenAI. The running agent may call OpenAI to analyze a failed target-repository test run.
 
 ## Current Limitations
 
@@ -358,8 +373,8 @@ No standard verification command calls OpenAI.
 - Exploration uses a fixed set of read-only tools.
 - Write capability is limited to approved create and full-content edit operations in existing directories.
 - There is no persistent session or memory.
-- Tests and verification strategies are displayed but not executed.
-- Execution failures are not corrected automatically.
+- Test execution is fixed to `npm test`; other package managers and commands are unsupported.
+- Corrections use complete file content rather than patches and remain non-transactional.
 - There is no event log beyond current CLI output.
 
 Follow the [Roadmap](../README.md#roadmap) for planned capabilities.

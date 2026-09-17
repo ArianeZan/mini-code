@@ -1,5 +1,7 @@
 import type { CodingPlan } from './CodingPlan.js';
 import type { RepositoryExploration } from './RepositoryExploration.js';
+import type { VerificationCorrectionRecord } from './VerificationCorrection.js';
+import type { VerificationResult } from './VerificationResult.js';
 
 export type AgentStatus =
   | 'exploring'
@@ -26,6 +28,8 @@ export interface AgentState {
   };
   readonly verification: {
     readonly attempts: number;
+    readonly lastResult?: VerificationResult;
+    readonly corrections: VerificationCorrectionRecord[];
   };
   readonly failureReason?: string;
 }
@@ -51,7 +55,7 @@ export function createInitialAgentState(goal: string, repositoryRoot: string): A
       failedTaskIds: [],
       modifiedFiles: [],
     },
-    verification: { attempts: 0 },
+    verification: { attempts: 0, corrections: [] },
   };
 }
 

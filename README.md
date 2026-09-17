@@ -2,7 +2,7 @@
 
 Mini Coding Agent is a small TypeScript coding agent built to make agentic software engineering understandable. Instead of hiding behavior behind an agent framework, it exposes the loop, tools, structured decisions, safety boundaries, and tests that drive the system.
 
-> Current status: repository exploration, structured planning, human approval, safe file changes, and final diff generation are functional. Automated verification is the next milestone.
+> Current status: the complete V0.4 workflow is functional: exploration, planning, approval, safe file changes, bounded test verification, automatic correction, and final diff generation. Typed observability events are the next milestone.
 
 ## Quick Start
 
@@ -45,7 +45,7 @@ Explore another repository:
 npm run dev -- "Add expiration handling to password reset tokens" --repo ../another-project
 ```
 
-The current version reports relevant files and an ordered implementation plan, asks for approval, executes approved tasks sequentially, and shows the final Git diff. It does not run tests or automatically correct failures yet.
+The current version reports relevant files and an ordered implementation plan, asks for approval, executes approved tasks, runs `npm test`, applies bounded corrections when tests fail, and shows the final Git diff.
 
 ## What Is Mini Coding Agent?
 
@@ -87,8 +87,8 @@ The goal is educational clarity and credible engineering, not feature parity wit
 | Human approval | Available |
 | File creation and editing | Available |
 | Final Git diff | Available |
-| Test and correction loop | Next milestone |
-| Event stream | Planned |
+| Test and correction loop | Available |
+| Event stream | Next milestone |
 
 ## Architecture
 
@@ -99,6 +99,7 @@ flowchart TD
     Agent --> Plan[CreateCodingPlan]
     Agent --> Approval[PlanApproval]
     Agent --> Execute[ExecuteCodingPlan]
+    Agent --> Verify[VerifyChanges]
     Explore --> LM[LanguageModel port]
     Plan --> LM
     Execute --> LM
@@ -113,6 +114,9 @@ flowchart TD
     Plan --> Sandbox
     Execute --> Create[create_file]
     Execute --> Edit[edit_file]
+    Verify --> Tests[run_tests]
+    Verify --> LM
+    Verify --> Edit
     Create --> Sandbox
     Edit --> Sandbox
     Agent --> Diff[git_diff]
@@ -151,6 +155,8 @@ The model may choose `list_files`, `read_file`, `search_code`, or `complete`. A 
 
 After exploration, a separate structured generation creates ordered tasks. Existing files can only be marked `modify` when exploration identified them, while `create` targets must be safe relative paths that do not already exist. The CLI asks for explicit approval, then each task receives a structured full-content proposal restricted to the approved files and operations.
 
+After execution, the agent runs the repository's fixed `npm test` script. A failure can produce a structured correction for approved files, followed by another test run. Verification stops after three total test attempts, so at most two corrections are applied.
+
 ## Safety
 
 The current implementation follows least capability:
@@ -168,10 +174,12 @@ The current implementation follows least capability:
 - planned modifications are limited to explored files;
 - planned creations cannot overwrite existing or restricted paths.
 - execution proposals cannot add files or change approved operations;
+- verification corrections can edit only approved plan files;
+- tests run at most three times, with a 120-second and 200 KB output bound per run;
 - Git is validated before model calls or writes;
 - the final diff is bounded to 5 MB.
 
-Running an agent against a repository still sends selected repository content to the configured model provider. Only use repositories you are authorized to inspect.
+Running an agent against a repository sends selected repository content to the configured model provider and executes that repository's `npm test` script. Only use repositories you are authorized to inspect and execute.
 
 ## What This Project Explores
 
@@ -203,8 +211,8 @@ Running an agent against a repository still sends selected repository content to
 | 2. Exploration | Safe list, read, search, and relevance selection | Complete |
 | 3. Planning | Ordered structured plan and verification strategy | Complete |
 | 4. Execution | Approval, file changes, and diff generation | Complete |
-| 5. Verification | Tests, failure analysis, and bounded correction | Next |
-| 6. Observability | Typed events and console event sink | Planned |
+| 5. Verification | Tests, failure analysis, and bounded correction | Complete |
+| 6. Observability | Typed events and console event sink | Next |
 | 7. Portfolio polish | Example project and final documentation | In progress |
 
 ## Documentation
@@ -223,7 +231,7 @@ npm run typecheck
 npm run build
 ```
 
-The test suite is deterministic and does not call OpenAI. It covers model fakes, state transitions, structured schemas, tool validation, traversal protection, symlink escapes, plan invariants, approval cancellation, sequential execution, partial failures, Git validation and diff generation, and CLI rendering.
+The test suite is deterministic and does not call OpenAI. It covers model fakes, state transitions, structured schemas, tool validation, traversal protection, approval, sequential execution, fixed test execution, retry and exhaustion behavior, correction allowlists, process/output limits, Git diff generation, and CLI rendering.
 
 ## Future Experiments
 

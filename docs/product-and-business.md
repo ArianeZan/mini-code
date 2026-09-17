@@ -11,7 +11,7 @@ It is a portfolio product rather than a commercial replacement for established c
 | Target product | A CLI agent that progressively explores, plans, modifies, and verifies changes in a local repository |
 | Primary user | Software engineers learning or evaluating agentic system design |
 | Primary value | A compact, inspectable reference implementation of a coding-agent workflow |
-| Current release | Package version `0.1.0`: exploration, planning, approval, bounded file execution, and Git diff |
+| Current release | Package version `0.1.0`: complete V0.4 workflow through bounded verification and correction |
 | Interface | Local command-line application |
 | Model provider | OpenAI through a provider-independent port |
 | Business model | Open-source portfolio and learning project; no monetization is assumed |
@@ -107,10 +107,18 @@ User approves or cancels
         |
         +---- cancel ----> Agent exits without writes
         |
-        +---- approve ---> Agent applies approved file operations and shows the diff
+        +---- approve ---> Agent applies approved file operations
+                                  |
+                                  v
+                           Tests run up to three times
+                                  |
+                         pass ----+---- fail with attempts left
+                           |                 |
+                           v                 v
+                     Final diff       Approved-file correction
 ```
 
-The target MVP extends this journey:
+This is the completed V0.4 functional journey:
 
 ```text
 Explore -> Plan -> Approve -> Execute -> Verify -> Correct or Finish
@@ -118,9 +126,9 @@ Explore -> Plan -> Approve -> Execute -> Verify -> Correct or Finish
 
 ## Scope
 
-### Target MVP Outcomes
+### MVP Outcomes
 
-V0.4 is a future target beyond the current `0.1.0` package. The MVP will be successful when it can:
+V0.4 is the completed functional milestone; the npm package remains versioned `0.1.0`. The MVP can:
 
 1. Understand a repository-level coding goal.
 2. Identify relevant files through tools.
@@ -128,7 +136,7 @@ V0.4 is a future target beyond the current `0.1.0` package. The MVP will be succ
 4. Obtain explicit human approval.
 5. Apply only approved file changes.
 6. Run a fixed test capability.
-7. Analyze failures and retry no more than three times.
+7. Analyze failures across at most three total test attempts and two corrections.
 8. Finish with a diff and a controlled success or failure summary.
 
 ### Intentionally Out of Scope
@@ -187,8 +195,8 @@ The project uses engineering and portfolio measures rather than revenue metrics.
 | 2. Repository exploration | The agent identifies likely relevant files without writing | Complete |
 | 3. Planning | The user sees an ordered plan and verification strategy | Complete |
 | 4. Approval and execution | The user approves before bounded file changes | Complete |
-| 5. Verification | The agent tests and performs limited self-correction | Next |
-| 6. Observability | Typed events expose workflow progress | Planned |
+| 5. Verification | The agent tests and performs limited self-correction | Complete |
+| 6. Observability | Typed events expose workflow progress | Next |
 | 7. Portfolio polish | A reproducible demo and finished narrative are available | In progress |
 
 ## Product Decisions

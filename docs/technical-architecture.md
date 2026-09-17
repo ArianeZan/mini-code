@@ -1,6 +1,6 @@
 # Technical Architecture
 
-Mini Coding Agent uses a small Ports and Adapters structure to keep the agent workflow explicit, provider-independent, and testable. The current implementation delivers repository exploration, structured planning, human approval, bounded file execution, explicit state transitions, and final Git diff generation. Automated verification and events remain future milestones.
+Mini Coding Agent uses a small Ports and Adapters structure to keep the agent workflow explicit, provider-independent, and testable. The current implementation delivers the complete V0.4 workflow through bounded verification and correction. Typed observability events remain the next milestone.
 
 ## Architecture at a Glance
 
@@ -12,12 +12,15 @@ flowchart LR
     RunCodingAgent --> CreateCodingPlan
     RunCodingAgent --> PlanApproval
     RunCodingAgent --> ExecuteCodingPlan
+    RunCodingAgent --> VerifyChanges
     RunCodingAgent --> GitDiff
     ExploreRepository --> ExplorationResult[RepositoryExploration]
     ExplorationResult --> CreateCodingPlan
     ExploreRepository --> LanguageModel
     CreateCodingPlan --> LanguageModel
     ExecuteCodingPlan --> LanguageModel
+    VerifyChanges --> LanguageModel
+    VerifyChanges --> TestRunner[TestRunner port]
     CreateCodingPlan --> PathInspector[RepositoryPathInspector port]
     ExploreRepository --> ToolRegistry
     LanguageModel --> OpenAIAdapter
@@ -33,6 +36,8 @@ flowchart LR
     ExecuteCodingPlan --> EditFile
     CreateFile --> Sandbox
     EditFile --> Sandbox
+    VerifyChanges --> EditFile
+    RunTestsTool -. implements .-> TestRunner
 ```
 
 The dependency direction is inward:
@@ -60,6 +65,7 @@ src/
       ExploreRepository.ts
       RunCodingAgent.ts
       ToolRegistry.ts
+      VerifyChanges.ts
     domain/
       AgentState.ts
       CodingPlan.ts
@@ -67,6 +73,8 @@ src/
       RepositoryPathPolicy.ts
       RepositoryExploration.ts
       TaskExecutionProposal.ts
+      VerificationCorrection.ts
+      VerificationResult.ts
     ports/
       ChangeDiff.ts
       FileMutationTools.ts
@@ -75,6 +83,7 @@ src/
       RepositoryPathInspector.ts
       RepositoryTools.ts
       Tool.ts
+      TestingTools.ts
     infrastructure/
       llm/
         OpenAILanguageModel.ts
@@ -90,6 +99,8 @@ src/
           walkRepository.ts
         git/
           GitDiffTool.ts
+        testing/
+          RunTestsTool.ts
   cli/
     ConsolePlanApproval.ts
     main.ts
@@ -112,12 +123,12 @@ It:
 4. Creates one `RepositorySandbox`.
 5. Registers read-only exploration tools and create/edit tools.
 6. Creates `OpenAILanguageModel`, unless a model was injected by a test.
-7. Creates `RunCodingAgent` with exploration, planning, execution, approval, and diff dependencies.
+7. Creates `RunCodingAgent` with exploration, planning, execution, verification, approval, and diff dependencies.
 8. Validates that the selected path is inside a Git working tree.
 9. Runs exploration and planning.
 10. Renders the plan through `ConsolePlanApproval` and asks `[y/N]`.
 11. On cancellation, prints confirmation and exits without writes or a diff.
-12. On approval, executes tasks sequentially and renders final state, modified files, failures, and diff.
+12. On approval, executes tasks sequentially, runs bounded verification, applies approved-file corrections when needed, and renders final state, test attempts, modified files, failures, and diff.
 
 No dependency injection container or factory layer is used. Wiring remains visible because there are only a few dependencies.
 
@@ -281,13 +292,13 @@ Application workflows can observe expected tool failures without using exception
 `RunCodingAgent` owns explicit state with these statuses:
 
 ```text
-exploring -> planning -> awaiting-approval -> executing -> completed
-                                      |             |
-                                      v             v
-                                  cancelled       failed
+exploring -> planning -> awaiting-approval -> executing -> verifying -> completed
+                                      |           |          |
+                                      v           v          v
+                                  cancelled     failed     failed
 ```
 
-The domain also reserves `verifying` for Milestone 5. State records exploration, plan, completed and failed task IDs, modified files, final diff, verification attempts, and a controlled failure reason.
+State records exploration, plan, completed and failed task IDs, modified files, final diff, verification attempts, the last test result, correction analyses, and a controlled failure reason.
 
 ## Read-Only Tools
 
@@ -310,6 +321,14 @@ Search is a case-insensitive literal match, not a regular expression. A file is 
 Git is validated before exploration, model calls, approval, or writes. The diff is scoped to the selected path and includes staged, unstaged, and non-ignored untracked file content in that subtree, including pre-existing changes. Untracked paths are containment-checked with `realpath`; symlinks encountered during expansion are rejected.
 
 Create and edit tools receive only paths and complete content already validated against the approved task. There is no delete, rename, arbitrary patch, shell, commit, reset, push, or publish capability.
+
+## Verification Capability
+
+`RunTestsTool` exposes only an empty input and always launches the repository's `npm test` script with fixed arguments. The LLM cannot provide a command, executable, argument, or environment variable.
+
+`VerifyChanges` runs tests at most three times. After the first or second failure it may request one structured correction containing complete content for a subset of approved plan files. The entire correction is validated before its first write. It cannot create, delete, rename, or add a path.
+
+Each run captures exit code, stdout, stderr, duration, timeout, and truncation state. A passing exit requires code zero without timeout or output truncation.
 
 ## Repository Sandbox
 
@@ -364,6 +383,8 @@ The sandbox protects against deterministic traversal and symlink escapes. Node.j
 
 Approved tasks are sequential but not transactional. If a later write fails, earlier writes remain and are recorded in `modifiedFiles`. Non-ignored changes within the selected Git subtree appear in the final diff. There is no automatic rollback. Atomic replacement preserves mode bits, but a new inode may not preserve ownership, ACLs, or extended attributes on every filesystem.
 
+`npm test` executes repository-controlled code. The runner requests termination at its timeout and resolves after a one-second grace period even if process pipes remain open. POSIX process groups receive `SIGTERM` followed by `SIGKILL`; Node cannot portably guarantee termination of every resistant descendant on Windows. This is part of the trusted-repository boundary.
+
 ## Resource Bounds
 
 Resource limits protect cost, latency, and context size:
@@ -382,6 +403,11 @@ Resource limits protect cost, latency, and context size:
 | Final Git diff | 5,000,000 bytes aggregate |
 | Untracked files in diff | 1,000 |
 | Inspected entries while expanding untracked directories | 4,000 |
+| Verification attempts | 3 total |
+| Test runtime per attempt | 120,000 ms plus 1,000 ms termination grace |
+| Captured test output per attempt | 200,000 bytes across stdout and stderr |
+| Correction changes | 20 files, 1,000,000 characters per file |
+| Correction aggregate content | 2,000,000 UTF-8 bytes |
 
 When a traversal or content limit is reached, tools set `truncated: true`. Exploration can continue, but the model must reason from incomplete evidence.
 
@@ -403,9 +429,11 @@ Errors are handled at two levels:
 | Approval rejected | State becomes `cancelled`; no write tool runs |
 | Invalid execution proposal | Current task fails before its first write |
 | Write failure | State becomes `failed`; earlier successful writes remain tracked |
+| Test failure with attempts left | Model analyzes output and proposes an approved-file correction |
+| Third test failure | State becomes `failed`; no third correction is requested |
+| Invalid correction | State becomes `failed` before any correction file is written |
+| Test runner failure | State becomes `failed` with a controlled synthetic result |
 | Diff failure | State becomes `failed` while preserving any execution failure reason |
-
-Milestone 5 will activate the existing `verifying` state and verification-attempt counter.
 
 ## Testing Strategy
 
@@ -441,6 +469,7 @@ Covered behavior includes:
 - Git validation, staged/untracked diff content, and symlink containment;
 - registry input/output validation;
 - controlled execution failures.
+- fixed `npm test` success, failure, timeout, output bounds, and rejected command input.
 
 ### Application Boundary
 
@@ -475,6 +504,15 @@ Execution coverage includes:
 - partial write failure tracking;
 - pre-write Git validation;
 - final state, modified files, and diff rendering.
+
+Verification coverage includes:
+
+- pass on the first attempt without an LLM correction;
+- fail, correct, and pass on a later attempt;
+- failure after exactly three attempts and two corrections;
+- approved-file enforcement and validation before writes;
+- aggregate correction bounds and controlled runner failures;
+- final diff generation after successful or failed verification.
 
 ### Verification Commands
 
@@ -521,11 +559,7 @@ flowchart LR
     Verify -->|fail, limit reached| Failed
 ```
 
-The remaining planned additions are:
-
-1. Fixed `npm test` capability with three verification attempts.
-2. Structured failure analysis and approved-file correction proposals.
-3. Typed `AgentEvent` output through an `EventSink` port.
+The remaining planned addition is typed `AgentEvent` output through an `EventSink` port, followed by the reproducible sample-project demo and final portfolio review.
 
 ## Review Checklist
 

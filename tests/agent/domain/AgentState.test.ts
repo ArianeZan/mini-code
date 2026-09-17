@@ -12,9 +12,11 @@ describe('AgentState', () => {
     state = transitionAgentState(state, 'planning');
     state = transitionAgentState(state, 'awaiting-approval');
     state = transitionAgentState(state, 'executing');
+    state = transitionAgentState(state, 'verifying');
     state = transitionAgentState(state, 'completed');
 
     expect(state.status).toBe('completed');
+    expect(state.verification).toEqual({ attempts: 0, corrections: [] });
   });
 
   it('supports cancellation before execution', () => {
