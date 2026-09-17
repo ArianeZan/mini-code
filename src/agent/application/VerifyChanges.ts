@@ -4,6 +4,11 @@ import {
   type VerificationCorrectionRecord,
 } from '../domain/VerificationCorrection.js';
 import type { LanguageModel } from '../ports/LanguageModel.js';
+import {
+  NO_OP_EVENT_SINK,
+  emitSafely,
+  type EventSink,
+} from '../ports/EventSink.js';
 import { ReadFileOutputSchema } from '../ports/RepositoryTools.js';
 import {
   VerificationResultSchema,
@@ -42,6 +47,7 @@ export class VerifyChanges {
     private readonly languageModel: LanguageModel,
     private readonly tools: ToolRegistry,
     private readonly testRunner: TestRunner,
+    private readonly eventSink: EventSink = NO_OP_EVENT_SINK,
   ) {}
 
   async execute(goal: string, plan: CodingPlan): Promise<VerificationLoopResult> {
@@ -63,11 +69,13 @@ export class VerifyChanges {
     const modifiedFiles = new Set<string>();
 
     for (let attempt = 1; attempt <= MAX_VERIFICATION_ATTEMPTS; attempt += 1) {
+      emitSafely(this.eventSink, { type: 'verification-started', attempt });
       let result: VerificationResult;
       try {
         result = VerificationResultSchema.parse(await this.testRunner.run());
       } catch (error) {
         result = failedTestResult(errorMessage(error));
+        emitVerificationFailed(this.eventSink, attempt, result);
         return verificationFailure(
           attempt,
           result,
@@ -78,6 +86,11 @@ export class VerifyChanges {
       }
 
       if (result.passed) {
+        emitSafely(this.eventSink, {
+          type: 'verification-passed',
+          attempt,
+          durationMs: result.durationMs,
+        });
         return {
           success: true,
           attempts: attempt,
@@ -86,6 +99,8 @@ export class VerifyChanges {
           modifiedFiles: [...modifiedFiles],
         };
       }
+
+      emitVerificationFailed(this.eventSink, attempt, result);
 
       if (attempt === MAX_VERIFICATION_ATTEMPTS) {
         return verificationFailure(
@@ -141,6 +156,12 @@ export class VerifyChanges {
         );
       }
 
+      emitSafely(this.eventSink, {
+        type: 'correction-proposed',
+        attempt,
+        files: correction.changes.map((change) => change.path),
+      });
+
       const proposedPaths = new Set<string>();
       const proposedChanges: Array<{ path: string; content: string }> = [];
       const correctedFiles: string[] = [];
@@ -151,6 +172,7 @@ export class VerifyChanges {
         const approvedPath = approvedFiles.get(pathKey);
         if (!approvedPath) {
           corrections.push(correctionRecord(attempt, correction.analysis, correctedFiles));
+          rejectCorrection(this.eventSink, attempt, `Unapproved file: ${change.path}`);
           return verificationFailure(
             attempt,
             result,
@@ -162,6 +184,7 @@ export class VerifyChanges {
 
         if (proposedPaths.has(pathKey)) {
           corrections.push(correctionRecord(attempt, correction.analysis, correctedFiles));
+          rejectCorrection(this.eventSink, attempt, `Repeated file: ${change.path}`);
           return verificationFailure(
             attempt,
             result,
@@ -175,6 +198,7 @@ export class VerifyChanges {
         correctionBytes += Buffer.byteLength(change.content, 'utf8');
         if (correctionBytes > MAX_CORRECTION_BYTES) {
           corrections.push(correctionRecord(attempt, correction.analysis, correctedFiles));
+          rejectCorrection(this.eventSink, attempt, 'Aggregate correction size exceeded');
           return verificationFailure(
             attempt,
             result,
@@ -194,6 +218,7 @@ export class VerifyChanges {
         });
         if (!editResult.ok) {
           corrections.push(correctionRecord(attempt, correction.analysis, correctedFiles));
+          rejectCorrection(this.eventSink, attempt, `Write failed: ${change.path}`);
           return verificationFailure(
             attempt,
             result,
@@ -205,9 +230,15 @@ export class VerifyChanges {
 
         correctedFiles.push(change.path);
         modifiedFiles.add(change.path);
+        emitSafely(this.eventSink, { type: 'file-modified', path: change.path });
       }
 
       corrections.push(correctionRecord(attempt, correction.analysis, correctedFiles));
+      emitSafely(this.eventSink, {
+        type: 'correction-applied',
+        attempt,
+        files: correctedFiles,
+      });
     }
 
     throw new Error('Verification loop ended unexpectedly');
@@ -261,4 +292,22 @@ function correctionRecord(
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Verification failed';
+}
+
+function emitVerificationFailed(
+  eventSink: EventSink,
+  attempt: number,
+  result: VerificationResult,
+): void {
+  emitSafely(eventSink, {
+    type: 'verification-failed',
+    attempt,
+    exitCode: result.exitCode,
+    timedOut: result.timedOut,
+    outputTruncated: result.outputTruncated,
+  });
+}
+
+function rejectCorrection(eventSink: EventSink, attempt: number, reason: string): void {
+  emitSafely(eventSink, { type: 'correction-rejected', attempt, reason });
 }

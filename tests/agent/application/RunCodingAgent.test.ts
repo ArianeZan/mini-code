@@ -10,6 +10,7 @@ import { ExploreRepository } from '../../../src/agent/application/ExploreReposit
 import { RunCodingAgent } from '../../../src/agent/application/RunCodingAgent.js';
 import { ToolRegistry } from '../../../src/agent/application/ToolRegistry.js';
 import { VerifyChanges } from '../../../src/agent/application/VerifyChanges.js';
+import type { AgentEvent } from '../../../src/agent/domain/AgentEvent.js';
 import { SearchCodeTool } from '../../../src/agent/infrastructure/tools/code/SearchCodeTool.js';
 import { CreateFileTool } from '../../../src/agent/infrastructure/tools/filesystem/CreateFileTool.js';
 import { EditFileTool } from '../../../src/agent/infrastructure/tools/filesystem/EditFileTool.js';
@@ -17,6 +18,7 @@ import { ListFilesTool } from '../../../src/agent/infrastructure/tools/filesyste
 import { ReadFileTool } from '../../../src/agent/infrastructure/tools/filesystem/ReadFileTool.js';
 import { RepositorySandbox } from '../../../src/agent/infrastructure/tools/filesystem/RepositorySandbox.js';
 import type { PlanApproval } from '../../../src/agent/ports/PlanApproval.js';
+import type { EventSink } from '../../../src/agent/ports/EventSink.js';
 import type {
   TestRunner,
   VerificationResult,
@@ -222,21 +224,109 @@ describe('RunCodingAgent', () => {
     expect(runner.calls).toBe(3);
   });
 
+  it('emits the successful workflow in observable order', async () => {
+    const eventSink = new RecordingEventSink();
+    const observedTools = new ToolRegistry(eventSink);
+    observedTools.register(new ListFilesTool(sandbox));
+    observedTools.register(new ReadFileTool(sandbox, 1_000_000));
+    observedTools.register(new SearchCodeTool(sandbox));
+    observedTools.register(new CreateFileTool(sandbox));
+    observedTools.register(new EditFileTool(sandbox));
+    const model = new FakeLanguageModel([
+      ...explorationResponses(),
+      codingPlanResponse(),
+      executionResponse('verified implementation\n'),
+    ]);
+    const agent = new RunCodingAgent({
+      exploreRepository: new ExploreRepository(model, observedTools),
+      createCodingPlan: new CreateCodingPlan(model, sandbox),
+      executeCodingPlan: new ExecuteCodingPlan(model, observedTools, eventSink),
+      verifyChanges: new VerifyChanges(
+        model,
+        observedTools,
+        new FakeTestRunner([testResult(true)]),
+        eventSink,
+      ),
+      planApproval: { requestApproval: async () => true },
+      changeDiff: { validate: async () => undefined, generate: async () => 'final diff' },
+      eventSink,
+    });
+
+    await agent.execute('Validate registration email', repositoryRoot);
+
+    expect(eventSink.events.map((event) => event.type)).toEqual([
+      'goal-received',
+      'exploration-started',
+      'tool-started',
+      'tool-completed',
+      'exploration-completed',
+      'planning-started',
+      'plan-created',
+      'approval-requested',
+      'approval-granted',
+      'execution-started',
+      'task-started',
+      'tool-started',
+      'tool-completed',
+      'tool-started',
+      'tool-completed',
+      'file-modified',
+      'task-completed',
+      'verification-started',
+      'verification-passed',
+      'diff-generated',
+      'agent-completed',
+    ]);
+  });
+
+  it('continues when the event sink throws', async () => {
+    const model = new FakeLanguageModel([
+      ...explorationResponses(),
+      codingPlanResponse(),
+      executionResponse('verified implementation\n'),
+    ]);
+    const throwingSink: EventSink = {
+      emit: () => {
+        throw new Error('observability unavailable');
+      },
+    };
+    const throwingAgent = createAgent(
+      model,
+      { requestApproval: async () => true },
+      new FakeTestRunner([testResult(true)]),
+      throwingSink,
+    );
+
+    const state = await throwingAgent.execute('Validate registration email', repositoryRoot);
+
+    expect(state.status).toBe('completed');
+  });
+
   function createAgent(
     model: FakeLanguageModel,
     approval: PlanApproval,
     testRunner: TestRunner = new FakeTestRunner([testResult(true)]),
+    eventSink?: EventSink,
   ): RunCodingAgent {
     return new RunCodingAgent({
       exploreRepository: new ExploreRepository(model, tools),
       createCodingPlan: new CreateCodingPlan(model, sandbox),
-      executeCodingPlan: new ExecuteCodingPlan(model, tools),
-      verifyChanges: new VerifyChanges(model, tools, testRunner),
+      executeCodingPlan: new ExecuteCodingPlan(model, tools, eventSink),
+      verifyChanges: new VerifyChanges(model, tools, testRunner, eventSink),
       planApproval: approval,
       changeDiff: { validate: async () => undefined, generate: async () => 'final diff' },
+      ...(eventSink ? { eventSink } : {}),
     });
   }
 });
+
+class RecordingEventSink implements EventSink {
+  readonly events: AgentEvent[] = [];
+
+  emit(event: AgentEvent): void {
+    this.events.push(event);
+  }
+}
 
 function explorationResponses(): unknown[] {
   return [

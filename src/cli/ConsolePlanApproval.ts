@@ -10,7 +10,6 @@ export class ConsolePlanApproval implements PlanApproval {
   ) {}
 
   async requestApproval(context: PlanApprovalContext): Promise<boolean> {
-    this.output('Exploration complete');
     this.output(context.exploration.summary);
     this.output('Relevant files:');
 
@@ -22,7 +21,6 @@ export class ConsolePlanApproval implements PlanApproval {
       });
     }
 
-    this.output('Plan generated');
     context.plan.tasks.forEach((task, index) => {
       this.output(`${index + 1}. ${task.description} [${task.id}]`);
       task.files.forEach((file) => {
@@ -34,7 +32,6 @@ export class ConsolePlanApproval implements PlanApproval {
 
     const answer = await this.ask();
     const approved = /^(y|yes)$/i.test(answer.trim());
-    this.output(approved ? 'Executing approved plan...' : 'Plan cancelled. No files were changed.');
     return approved;
   }
 }

@@ -2,6 +2,11 @@ import type { CodingPlan, CodingTask } from '../domain/CodingPlan.js';
 import { TaskExecutionProposalSchema } from '../domain/TaskExecutionProposal.js';
 import { ReadFileOutputSchema } from '../ports/RepositoryTools.js';
 import type { LanguageModel } from '../ports/LanguageModel.js';
+import {
+  NO_OP_EVENT_SINK,
+  emitSafely,
+  type EventSink,
+} from '../ports/EventSink.js';
 import type { ToolRegistry } from './ToolRegistry.js';
 
 const EXECUTION_INSTRUCTIONS = `Implement exactly one approved coding task.
@@ -29,6 +34,7 @@ export class ExecuteCodingPlan {
   constructor(
     private readonly languageModel: LanguageModel,
     private readonly tools: ToolRegistry,
+    private readonly eventSink: EventSink = NO_OP_EVENT_SINK,
   ) {}
 
   async execute(goal: string, plan: CodingPlan): Promise<PlanExecutionResult> {
@@ -36,9 +42,19 @@ export class ExecuteCodingPlan {
     const modifiedFiles = new Set<string>();
 
     for (const task of plan.tasks) {
+      emitSafely(this.eventSink, {
+        type: 'task-started',
+        taskId: task.id,
+        description: task.description,
+      });
       const taskResult = await this.#executeTask(goal, task);
 
       if (!taskResult.success) {
+        emitSafely(this.eventSink, {
+          type: 'task-failed',
+          taskId: task.id,
+          reason: taskResult.failureReason,
+        });
         taskResult.modifiedFiles.forEach((file) => modifiedFiles.add(file));
         return {
           success: false,
@@ -51,6 +67,7 @@ export class ExecuteCodingPlan {
 
       taskResult.modifiedFiles.forEach((file) => modifiedFiles.add(file));
       completedTaskIds.push(task.id);
+      emitSafely(this.eventSink, { type: 'task-completed', taskId: task.id });
     }
 
     return {
@@ -177,6 +194,11 @@ export class ExecuteCodingPlan {
       }
 
       modifiedFiles.push(approvedFile.path);
+      emitSafely(this.eventSink, {
+        type: approvedFile.operation === 'create' ? 'file-created' : 'file-modified',
+        path: approvedFile.path,
+        taskId: task.id,
+      });
     }
 
     return { success: true, modifiedFiles };

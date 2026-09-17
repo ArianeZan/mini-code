@@ -11,7 +11,7 @@ It is a portfolio product rather than a commercial replacement for established c
 | Target product | A CLI agent that progressively explores, plans, modifies, and verifies changes in a local repository |
 | Primary user | Software engineers learning or evaluating agentic system design |
 | Primary value | A compact, inspectable reference implementation of a coding-agent workflow |
-| Current release | Package version `0.1.0`: complete V0.4 workflow through bounded verification and correction |
+| Current release | Package version `0.1.0`: complete V0.4 workflow with typed console observability |
 | Interface | Local command-line application |
 | Model provider | OpenAI through a provider-independent port |
 | Business model | Open-source portfolio and learning project; no monetization is assumed |
@@ -196,8 +196,8 @@ The project uses engineering and portfolio measures rather than revenue metrics.
 | 3. Planning | The user sees an ordered plan and verification strategy | Complete |
 | 4. Approval and execution | The user approves before bounded file changes | Complete |
 | 5. Verification | The agent tests and performs limited self-correction | Complete |
-| 6. Observability | Typed events expose workflow progress | Next |
-| 7. Portfolio polish | A reproducible demo and finished narrative are available | In progress |
+| 6. Observability | Typed events expose workflow progress | Complete |
+| 7. Portfolio polish | A reproducible demo and finished narrative are available | Next |
 
 ## Product Decisions
 

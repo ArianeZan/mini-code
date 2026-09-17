@@ -4,6 +4,11 @@ import {
   type AgentState,
 } from '../domain/AgentState.js';
 import type { ChangeDiff } from '../ports/ChangeDiff.js';
+import {
+  NO_OP_EVENT_SINK,
+  emitSafely,
+  type EventSink,
+} from '../ports/EventSink.js';
 import type { PlanApproval } from '../ports/PlanApproval.js';
 import type { CreateCodingPlan } from './CreateCodingPlan.js';
 import type { ExecuteCodingPlan } from './ExecuteCodingPlan.js';
@@ -17,6 +22,7 @@ export interface RunCodingAgentDependencies {
   readonly verifyChanges: VerifyChanges;
   readonly planApproval: PlanApproval;
   readonly changeDiff: ChangeDiff;
+  readonly eventSink?: EventSink;
 }
 
 export class RunCodingAgent {
@@ -24,26 +30,37 @@ export class RunCodingAgent {
 
   async execute(goal: string, repositoryRoot: string): Promise<AgentState> {
     let state = createInitialAgentState(goal, repositoryRoot);
+    const eventSink = this.dependencies.eventSink ?? NO_OP_EVENT_SINK;
+    emitSafely(eventSink, { type: 'goal-received', goal, repositoryRoot });
 
     try {
       await this.dependencies.changeDiff.validate();
+      emitSafely(eventSink, { type: 'exploration-started' });
       const exploration = await this.dependencies.exploreRepository.execute(goal);
+      emitSafely(eventSink, { type: 'exploration-completed', exploration });
       state = {
         ...transitionAgentState(state, 'planning'),
         exploration,
       };
 
+      emitSafely(eventSink, { type: 'planning-started' });
       const plan = await this.dependencies.createCodingPlan.execute(goal, exploration);
+      emitSafely(eventSink, { type: 'plan-created', plan });
       state = {
         ...transitionAgentState(state, 'awaiting-approval'),
         plan,
       };
 
+      emitSafely(eventSink, { type: 'approval-requested' });
       const approved = await this.dependencies.planApproval.requestApproval({ exploration, plan });
       if (!approved) {
+        emitSafely(eventSink, { type: 'approval-rejected' });
+        emitSafely(eventSink, { type: 'agent-cancelled' });
         return transitionAgentState(state, 'cancelled');
       }
 
+      emitSafely(eventSink, { type: 'approval-granted' });
+      emitSafely(eventSink, { type: 'execution-started' });
       state = transitionAgentState(state, 'executing');
       const execution = await this.dependencies.executeCodingPlan.execute(goal, plan);
       state = {
@@ -56,7 +73,7 @@ export class RunCodingAgent {
       };
 
       if (!execution.success) {
-        return this.#finish(state, 'failed', execution.failureReason);
+        return this.#finish(state, 'failed', execution.failureReason, eventSink);
       }
 
       state = transitionAgentState(state, 'verifying');
@@ -78,20 +95,22 @@ export class RunCodingAgent {
       };
 
       if (!verification.success) {
-        return this.#finish(state, 'failed', verification.failureReason);
+        return this.#finish(state, 'failed', verification.failureReason, eventSink);
       }
 
-      return this.#finish(state, 'completed');
+      return this.#finish(state, 'completed', undefined, eventSink);
     } catch (error) {
       if (state.status === 'completed' || state.status === 'cancelled' || state.status === 'failed') {
         return state;
       }
 
       if (state.status === 'executing' || state.status === 'verifying') {
-        return this.#finish(state, 'failed', errorMessage(error));
+        return this.#finish(state, 'failed', errorMessage(error), eventSink);
       }
 
-      return { ...transitionAgentState(state, 'failed'), failureReason: errorMessage(error) };
+      const failureReason = errorMessage(error);
+      emitSafely(eventSink, { type: 'agent-failed', reason: failureReason });
+      return { ...transitionAgentState(state, 'failed'), failureReason };
     }
   }
 
@@ -99,6 +118,7 @@ export class RunCodingAgent {
     state: AgentState,
     requestedStatus: 'completed' | 'failed',
     existingFailure?: string,
+    eventSink: EventSink = NO_OP_EVENT_SINK,
   ): Promise<AgentState> {
     let status = requestedStatus;
     let failureReason = existingFailure;
@@ -106,6 +126,10 @@ export class RunCodingAgent {
 
     try {
       diff = await this.dependencies.changeDiff.generate();
+      emitSafely(eventSink, {
+        type: 'diff-generated',
+        bytes: Buffer.byteLength(diff, 'utf8'),
+      });
     } catch (error) {
       status = 'failed';
       const diffFailure = `Could not generate diff: ${errorMessage(error)}`;
@@ -116,6 +140,15 @@ export class RunCodingAgent {
       ...transitionAgentState(state, status),
       execution: { ...state.execution, diff },
     };
+
+    if (status === 'completed') {
+      emitSafely(eventSink, { type: 'agent-completed' });
+    } else {
+      emitSafely(eventSink, {
+        type: 'agent-failed',
+        reason: failureReason ?? 'Coding agent failed',
+      });
+    }
 
     return failureReason ? { ...finishedState, failureReason } : finishedState;
   }

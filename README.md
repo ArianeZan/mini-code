@@ -2,7 +2,7 @@
 
 Mini Coding Agent is a small TypeScript coding agent built to make agentic software engineering understandable. Instead of hiding behavior behind an agent framework, it exposes the loop, tools, structured decisions, safety boundaries, and tests that drive the system.
 
-> Current status: the complete V0.4 workflow is functional: exploration, planning, approval, safe file changes, bounded test verification, automatic correction, and final diff generation. Typed observability events are the next milestone.
+> Current status: the complete V0.4 workflow and typed console observability are functional. The reproducible sample-project demo and final portfolio review are the remaining milestone.
 
 ## Quick Start
 
@@ -88,7 +88,7 @@ The goal is educational clarity and credible engineering, not feature parity wit
 | File creation and editing | Available |
 | Final Git diff | Available |
 | Test and correction loop | Available |
-| Event stream | Next milestone |
+| Typed event stream | Available |
 
 ## Architecture
 
@@ -100,6 +100,7 @@ flowchart TD
     Agent --> Approval[PlanApproval]
     Agent --> Execute[ExecuteCodingPlan]
     Agent --> Verify[VerifyChanges]
+    Agent --> Events[EventSink]
     Explore --> LM[LanguageModel port]
     Plan --> LM
     Execute --> LM
@@ -120,6 +121,7 @@ flowchart TD
     Create --> Sandbox
     Edit --> Sandbox
     Agent --> Diff[git_diff]
+    Events --> Console[ConsoleEventSink]
     Explore --> Result[RepositoryExploration]
     Result --> Plan
     Plan --> CodingPlan[CodingPlan]
@@ -156,6 +158,8 @@ The model may choose `list_files`, `read_file`, `search_code`, or `complete`. A 
 After exploration, a separate structured generation creates ordered tasks. Existing files can only be marked `modify` when exploration identified them, while `create` targets must be safe relative paths that do not already exist. The CLI asks for explicit approval, then each task receives a structured full-content proposal restricted to the approved files and operations.
 
 After execution, the agent runs the repository's fixed `npm test` script. A failure can produce a structured correction for approved files, followed by another test run. Verification stops after three total test attempts, so at most two corrections are applied.
+
+Every phase emits typed events for tools, tasks, files, verification attempts, corrections, diff generation, and terminal outcomes. Event payloads are cloned and frozen before delivery; observability failures do not change agent behavior.
 
 ## Safety
 
@@ -212,8 +216,8 @@ Running an agent against a repository sends selected repository content to the c
 | 3. Planning | Ordered structured plan and verification strategy | Complete |
 | 4. Execution | Approval, file changes, and diff generation | Complete |
 | 5. Verification | Tests, failure analysis, and bounded correction | Complete |
-| 6. Observability | Typed events and console event sink | Next |
-| 7. Portfolio polish | Example project and final documentation | In progress |
+| 6. Observability | Typed events and console event sink | Complete |
+| 7. Portfolio polish | Example project and final documentation | Next |
 
 ## Documentation
 
@@ -231,7 +235,7 @@ npm run typecheck
 npm run build
 ```
 
-The test suite is deterministic and does not call OpenAI. It covers model fakes, state transitions, structured schemas, tool validation, traversal protection, approval, sequential execution, fixed test execution, retry and exhaustion behavior, correction allowlists, process/output limits, Git diff generation, and CLI rendering.
+The test suite is deterministic and does not call OpenAI. It covers model fakes, state transitions, structured schemas, tool validation, traversal protection, approval, execution, verification retries, correction allowlists, process/output limits, ordered events, sink isolation, Git diff generation, and CLI rendering.
 
 ## Future Experiments
 

@@ -1,6 +1,6 @@
 # Technical Architecture
 
-Mini Coding Agent uses a small Ports and Adapters structure to keep the agent workflow explicit, provider-independent, and testable. The current implementation delivers the complete V0.4 workflow through bounded verification and correction. Typed observability events remain the next milestone.
+Mini Coding Agent uses a small Ports and Adapters structure to keep the agent workflow explicit, provider-independent, and testable. The current implementation delivers the complete V0.4 workflow through bounded verification and correction, plus typed console observability.
 
 ## Architecture at a Glance
 
@@ -14,6 +14,7 @@ flowchart LR
     RunCodingAgent --> ExecuteCodingPlan
     RunCodingAgent --> VerifyChanges
     RunCodingAgent --> GitDiff
+    RunCodingAgent --> EventSink
     ExploreRepository --> ExplorationResult[RepositoryExploration]
     ExplorationResult --> CreateCodingPlan
     ExploreRepository --> LanguageModel
@@ -38,6 +39,7 @@ flowchart LR
     EditFile --> Sandbox
     VerifyChanges --> EditFile
     RunTestsTool -. implements .-> TestRunner
+    EventSink --> ConsoleEventSink
 ```
 
 The dependency direction is inward:
@@ -68,6 +70,7 @@ src/
       VerifyChanges.ts
     domain/
       AgentState.ts
+      AgentEvent.ts
       CodingPlan.ts
       ExplorationDecision.ts
       RepositoryPathPolicy.ts
@@ -77,6 +80,7 @@ src/
       VerificationResult.ts
     ports/
       ChangeDiff.ts
+      EventSink.ts
       FileMutationTools.ts
       LanguageModel.ts
       PlanApproval.ts
@@ -102,6 +106,7 @@ src/
         testing/
           RunTestsTool.ts
   cli/
+    ConsoleEventSink.ts
     ConsolePlanApproval.ts
     main.ts
   main.ts
@@ -123,12 +128,13 @@ It:
 4. Creates one `RepositorySandbox`.
 5. Registers read-only exploration tools and create/edit tools.
 6. Creates `OpenAILanguageModel`, unless a model was injected by a test.
-7. Creates `RunCodingAgent` with exploration, planning, execution, verification, approval, and diff dependencies.
+7. Creates `RunCodingAgent` with exploration, planning, execution, verification, approval, diff, and event dependencies.
 8. Validates that the selected path is inside a Git working tree.
 9. Runs exploration and planning.
 10. Renders the plan through `ConsolePlanApproval` and asks `[y/N]`.
 11. On cancellation, prints confirmation and exits without writes or a diff.
 12. On approval, executes tasks sequentially, runs bounded verification, applies approved-file corrections when needed, and renders final state, test attempts, modified files, failures, and diff.
+13. `ConsoleEventSink` renders timestamped progress while the core remains independent of console output.
 
 No dependency injection container or factory layer is used. Wiring remains visible because there are only a few dependencies.
 
@@ -300,6 +306,22 @@ exploring -> planning -> awaiting-approval -> executing -> verifying -> complete
 
 State records exploration, plan, completed and failed task IDs, modified files, final diff, verification attempts, the last test result, correction analyses, and a controlled failure reason.
 
+### Agent Events
+
+`AgentEvent` is a discriminated union covering lifecycle phases, tool calls, tasks, successful file writes, verification attempts, correction outcomes, diff generation, and terminal outcomes.
+
+`EventSink` is a small output port:
+
+```ts
+interface EventSink {
+  emit(event: AgentEvent): void | Promise<void>
+}
+```
+
+`emitSafely` sends a structured-cloned, deeply frozen snapshot. Synchronous exceptions and asynchronous rejections are contained so observability cannot mutate workflow data or change the agent result. Events intentionally omit file contents and raw test output. Model-generated correction analysis remains in `AgentState` and final CLI reporting, not in event payloads.
+
+The current sink is process-local and best-effort. Events have no persistence, replay, run ID, schema version, or delivery acknowledgement. A future UI can implement the port without changing core workflows, but durable transport would need those additional concerns.
+
 ## Read-Only Tools
 
 | Tool | Input | Output | Default bounds |
@@ -434,6 +456,7 @@ Errors are handled at two levels:
 | Invalid correction | State becomes `failed` before any correction file is written |
 | Test runner failure | State becomes `failed` with a controlled synthetic result |
 | Diff failure | State becomes `failed` while preserving any execution failure reason |
+| Event sink failure | Is contained; agent state and behavior are unchanged |
 
 ## Testing Strategy
 
@@ -514,6 +537,15 @@ Verification coverage includes:
 - aggregate correction bounds and controlled runner failures;
 - final diff generation after successful or failed verification.
 
+Observability coverage includes:
+
+- exact successful workflow event ordering;
+- tool, task, file, verification, correction, diff, and terminal event types;
+- deterministic timestamped console rendering;
+- frozen snapshots that cannot mutate live workflow data;
+- contained synchronous exceptions and asynchronous sink rejections;
+- explicit correction rejection after a proposed correction cannot be applied.
+
 ### Verification Commands
 
 ```bash
@@ -559,7 +591,7 @@ flowchart LR
     Verify -->|fail, limit reached| Failed
 ```
 
-The remaining planned addition is typed `AgentEvent` output through an `EventSink` port, followed by the reproducible sample-project demo and final portfolio review.
+The remaining planned work is the reproducible sample-project demo and final portfolio review.
 
 ## Review Checklist
 

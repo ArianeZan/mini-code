@@ -5,6 +5,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ConsolePlanApproval } from '../../src/cli/ConsolePlanApproval.js';
+import { ConsoleEventSink } from '../../src/cli/ConsoleEventSink.js';
 import { parseCliArguments, resolveRepositoryRoot, runCli } from '../../src/cli/main.js';
 import { FakeLanguageModel } from '../helpers/FakeLanguageModel.js';
 
@@ -120,23 +121,43 @@ describe('CLI', () => {
           durationMs: 10,
         }),
       },
+      eventSink: new ConsoleEventSink(
+        (message) => output.push(message),
+        () => new Date('2026-09-16T14:32:01'),
+      ),
     });
 
     expect(output).toEqual([
       'Mini Coding Agent',
-      'Goal: Add email validation',
-      `Repository: ${await resolveRepositoryRoot(directory)}`,
-      'Exploring repository...',
-      'Exploration complete',
+      '[14:32:01] Goal received: Add email validation (' +
+        `${await resolveRepositoryRoot(directory)})`,
+      '[14:32:01] Exploring repository',
+      '[14:32:01] Tool started: list_files',
+      '[14:32:01] Tool completed: list_files',
+      '[14:32:01] Exploration completed: 1 relevant file(s)',
+      '[14:32:01] Creating coding plan',
+      '[14:32:01] Plan created: 1 task(s)',
+      '[14:32:01] Approval requested',
       'Found the registration implementation.',
       'Relevant files:',
       '- RegisterUser.ts: Contains the registration operation.',
-      'Plan generated',
       '1. Add validation to registration [task-1]',
       '   - modify RegisterUser.ts: Registration accepts the email input.',
       '   Expected outcome: Invalid emails are rejected.',
       'Verification strategy: Run the registration tests.',
-      'Executing approved plan...',
+      '[14:32:01] Plan approved',
+      '[14:32:01] Executing approved plan',
+      '[14:32:01] Task started: task-1 - Add validation to registration',
+      '[14:32:01] Tool started: read_file',
+      '[14:32:01] Tool completed: read_file',
+      '[14:32:01] Tool started: edit_file',
+      '[14:32:01] Tool completed: edit_file',
+      '[14:32:01] File modified: RegisterUser.ts',
+      '[14:32:01] Task completed: task-1',
+      '[14:32:01] Running tests: attempt 1',
+      '[14:32:01] Tests passed: attempt 1 (10 ms)',
+      '[14:32:01] Final diff generated: 46 bytes',
+      '[14:32:01] Agent completed',
       'Agent status: completed',
       'Completed tasks: task-1',
       'Modified files: RegisterUser.ts',

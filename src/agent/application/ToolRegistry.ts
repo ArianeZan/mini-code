@@ -1,4 +1,9 @@
 import type { Tool, ToolResult } from '../ports/Tool.js';
+import {
+  NO_OP_EVENT_SINK,
+  emitSafely,
+  type EventSink,
+} from '../ports/EventSink.js';
 
 type RegisteredTool = {
   readonly description: string;
@@ -7,6 +12,8 @@ type RegisteredTool = {
 
 export class ToolRegistry {
   readonly #tools = new Map<string, RegisteredTool>();
+
+  constructor(private readonly eventSink: EventSink = NO_OP_EVENT_SINK) {}
 
   register<TInput, TOutput>(tool: Tool<TInput, TOutput>): void {
     if (this.#tools.has(tool.name)) {
@@ -95,18 +102,33 @@ export class ToolRegistry {
   }
 
   async execute(name: string, input: unknown): Promise<ToolResult<unknown>> {
+    emitSafely(this.eventSink, { type: 'tool-started', toolName: name });
     const tool = this.#tools.get(name);
 
     if (!tool) {
-      return {
+      const result: ToolResult<unknown> = {
         ok: false,
         error: {
           code: 'unknown-tool',
           message: `Unknown tool: ${name}`,
         },
       };
+      emitSafely(this.eventSink, {
+        type: 'tool-completed',
+        toolName: name,
+        success: false,
+        errorCode: result.error.code,
+      });
+      return result;
     }
 
-    return tool.execute(input);
+    const result = await tool.execute(input);
+    emitSafely(this.eventSink, {
+      type: 'tool-completed',
+      toolName: name,
+      success: result.ok,
+      ...(result.ok ? {} : { errorCode: result.error.code }),
+    });
+    return result;
   }
 }

@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { ToolRegistry } from '../../../src/agent/application/ToolRegistry.js';
 import { VerifyChanges } from '../../../src/agent/application/VerifyChanges.js';
+import type { AgentEvent } from '../../../src/agent/domain/AgentEvent.js';
 import type { CodingPlan } from '../../../src/agent/domain/CodingPlan.js';
 import { EditFileTool } from '../../../src/agent/infrastructure/tools/filesystem/EditFileTool.js';
 import { ReadFileTool } from '../../../src/agent/infrastructure/tools/filesystem/ReadFileTool.js';
@@ -52,6 +53,7 @@ describe('VerifyChanges', () => {
   });
 
   it('applies a correction and reruns tests', async () => {
+    const events: AgentEvent[] = [];
     const model = new FakeLanguageModel([
       {
         analysis: 'The implementation still returns the invalid value.',
@@ -62,7 +64,11 @@ describe('VerifyChanges', () => {
     ]);
     const runner = new FakeTestRunner([testResult(false), testResult(true)]);
 
-    const result = await new VerifyChanges(model, tools, runner).execute('Fix registration', plan);
+    const result = await new VerifyChanges(model, tools, runner, {
+      emit: (event) => {
+        events.push(event);
+      },
+    }).execute('Fix registration', plan);
 
     expect(result).toMatchObject({
       success: true,
@@ -79,6 +85,15 @@ describe('VerifyChanges', () => {
     await expect(
       readFile(path.join(repositoryRoot, 'src', 'RegisterUser.ts'), 'utf8'),
     ).resolves.toBe('valid implementation\n');
+    expect(events.map((event) => event.type)).toEqual([
+      'verification-started',
+      'verification-failed',
+      'correction-proposed',
+      'file-modified',
+      'correction-applied',
+      'verification-started',
+      'verification-passed',
+    ]);
   });
 
   it('fails after three test attempts without applying a third correction', async () => {
@@ -124,6 +139,7 @@ describe('VerifyChanges', () => {
   });
 
   it('validates every correction path before editing any file', async () => {
+    const events: AgentEvent[] = [];
     const model = new FakeLanguageModel([
       {
         analysis: 'Attempt an invalid multi-file correction.',
@@ -135,7 +151,11 @@ describe('VerifyChanges', () => {
     ]);
     const runner = new FakeTestRunner([testResult(false)]);
 
-    const result = await new VerifyChanges(model, tools, runner).execute('Fix registration', plan);
+    const result = await new VerifyChanges(model, tools, runner, {
+      emit: (event) => {
+        events.push(event);
+      },
+    }).execute('Fix registration', plan);
 
     expect(result).toMatchObject({
       success: false,
@@ -144,6 +164,7 @@ describe('VerifyChanges', () => {
     await expect(
       readFile(path.join(repositoryRoot, 'src', 'RegisterUser.ts'), 'utf8'),
     ).resolves.toBe('invalid implementation\n');
+    expect(events.map((event) => event.type)).toContain('correction-rejected');
   });
 
   it('converts test runner exceptions into controlled failure', async () => {

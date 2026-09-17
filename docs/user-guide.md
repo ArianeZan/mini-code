@@ -161,15 +161,18 @@ A typical session looks like:
 
 ```text
 Mini Coding Agent
-Goal: Prevent users from registering with invalid email addresses
-Repository: C:\Projects\sample-app
-Exploring repository...
-Exploration complete
+[14:32:01] Goal received: Prevent users from registering with invalid email addresses (C:\Projects\sample-app)
+[14:32:01] Exploring repository
+[14:32:02] Tool started: list_files
+[14:32:02] Tool completed: list_files
+[14:32:03] Exploration completed: 2 relevant file(s)
+[14:32:03] Creating coding plan
+[14:32:05] Plan created: 2 task(s)
+[14:32:05] Approval requested
 Registration is handled by the users application module and covered by its tests.
 Relevant files:
 - src/users/RegisterUser.ts: Contains the registration workflow.
 - src/users/RegisterUser.test.ts: Verifies registration behavior.
-Plan generated
 1. Introduce validated email values [task-1]
    - create src/users/Email.ts: Represent a validated email address.
    - modify src/users/RegisterUser.ts: Validate input before registration.
@@ -179,7 +182,28 @@ Plan generated
    Expected outcome: Registration tests cover valid and invalid addresses.
 Verification strategy: Run the registration unit tests.
 Proceed? [y/N] y
-Executing approved plan...
+[14:32:12] Plan approved
+[14:32:12] Executing approved plan
+[14:32:12] Task started: task-1 - Introduce validated email values
+... tool events omitted ...
+[14:32:15] File created: src/users/Email.ts
+[14:32:15] File modified: src/users/RegisterUser.ts
+[14:32:15] Task completed: task-1
+[14:32:15] Task started: task-2 - Cover invalid registration
+... tool events omitted ...
+[14:32:18] File modified: src/users/RegisterUser.test.ts
+[14:32:18] Task completed: task-2
+[14:32:19] Running tests: attempt 1
+[14:32:24] Tests failed: attempt 1
+... tool events omitted ...
+[14:32:28] Correction proposed after attempt 1: 1 file(s)
+... tool events omitted ...
+[14:32:28] File modified: src/users/RegisterUser.ts
+[14:32:28] Correction applied after attempt 1: 1 file(s)
+[14:32:28] Running tests: attempt 2
+[14:32:33] Tests passed: attempt 2 (5000 ms)
+[14:32:34] Final diff generated: 1842 bytes
+[14:32:34] Agent completed
 Agent status: completed
 Completed tasks: task-1, task-2
 Modified files: src/users/Email.ts, src/users/RegisterUser.ts, src/users/RegisterUser.test.ts
@@ -196,6 +220,7 @@ The output contains:
 | --- | --- |
 | Goal | The exact goal passed to the CLI |
 | Repository | The resolved real path being explored |
+| Timestamped events | Live phase, tool, task, file, verification, correction, diff, and terminal progress |
 | Summary | The model's concise interpretation of the discovered evidence |
 | Relevant files | Only files observed through a registered tool |
 | Reason | Why each file appears related to the goal |
@@ -248,6 +273,8 @@ Before running the CLI:
 - read every task and file operation before approving.
 
 The restricted-path policy is defense in depth, not a data-loss-prevention product.
+
+Event payloads do not include file contents or raw test output. Console events are best-effort process output, not a durable audit log.
 
 Approved tasks execute sequentially. A task with multiple files is not transactional: if a later write fails, earlier writes remain and are reported. The agent does not automatically roll back changes. Atomic edits preserve basic mode bits, but replacement may not preserve ownership, ACLs, or extended attributes on every filesystem.
 
@@ -375,6 +402,6 @@ The project's own standard verification commands do not call OpenAI. The running
 - There is no persistent session or memory.
 - Test execution is fixed to `npm test`; other package managers and commands are unsupported.
 - Corrections use complete file content rather than patches and remain non-transactional.
-- There is no event log beyond current CLI output.
+- Events are not persisted and currently have no run ID, replay, or external telemetry backend.
 
 Follow the [Roadmap](../README.md#roadmap) for planned capabilities.

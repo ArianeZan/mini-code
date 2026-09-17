@@ -19,10 +19,12 @@ import { RepositorySandbox } from '../agent/infrastructure/tools/filesystem/Repo
 import { GitDiffTool } from '../agent/infrastructure/tools/git/GitDiffTool.js';
 import { RunTestsTool } from '../agent/infrastructure/tools/testing/RunTestsTool.js';
 import type { ChangeDiff } from '../agent/ports/ChangeDiff.js';
+import type { EventSink } from '../agent/ports/EventSink.js';
 import type { LanguageModel } from '../agent/ports/LanguageModel.js';
 import type { PlanApproval } from '../agent/ports/PlanApproval.js';
 import type { TestRunner } from '../agent/ports/TestingTools.js';
 import { ConsolePlanApproval } from './ConsolePlanApproval.js';
+import { ConsoleEventSink } from './ConsoleEventSink.js';
 
 export interface CliOptions {
   readonly goal: string;
@@ -35,6 +37,7 @@ export interface CliDependencies {
   readonly planApproval?: PlanApproval;
   readonly changeDiff?: ChangeDiff;
   readonly testRunner?: TestRunner;
+  readonly eventSink?: EventSink;
 }
 
 export function parseCliArguments(
@@ -98,14 +101,12 @@ export async function runCli(
 
   const repositoryRoot = await resolveRepositoryRoot(options.repositoryRoot);
   const output = dependencies.output ?? console.log;
+  const eventSink = dependencies.eventSink ?? new ConsoleEventSink(output);
 
   output('Mini Coding Agent');
-  output(`Goal: ${options.goal}`);
-  output(`Repository: ${repositoryRoot}`);
-  output('Exploring repository...');
 
   const sandbox = await RepositorySandbox.create(repositoryRoot);
-  const tools = new ToolRegistry();
+  const tools = new ToolRegistry(eventSink);
   tools.register(new ListFilesTool(sandbox));
   tools.register(new ReadFileTool(sandbox, 1_000_000));
   tools.register(new SearchCodeTool(sandbox));
@@ -116,14 +117,16 @@ export async function runCli(
   const agent = new RunCodingAgent({
     exploreRepository: new ExploreRepository(languageModel, tools),
     createCodingPlan: new CreateCodingPlan(languageModel, sandbox),
-    executeCodingPlan: new ExecuteCodingPlan(languageModel, tools),
+    executeCodingPlan: new ExecuteCodingPlan(languageModel, tools, eventSink),
     verifyChanges: new VerifyChanges(
       languageModel,
       tools,
       dependencies.testRunner ?? new RunTestsTool(repositoryRoot),
+      eventSink,
     ),
     planApproval: dependencies.planApproval ?? new ConsolePlanApproval(output),
     changeDiff: dependencies.changeDiff ?? new GitDiffTool(repositoryRoot),
+    eventSink,
   });
   const state = await agent.execute(options.goal, repositoryRoot);
 
